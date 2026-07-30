@@ -51,7 +51,10 @@
   #file-input { display: none; }
 
   #list-empty { color: var(--muted); font-size: 13px; }
-  #list { display: flex; flex-direction: column; gap: 14px; }
+  /* Responsives Grid statt starrer Spaltenzahl: Karten bekommen mind. 380px, dadurch passen
+     automatisch 1, 2 oder mehr pro Zeile - je nachdem wie breit das Widget eingebettet ist,
+     ohne separate Media-Query fuer die Kartenzahl. */
+  #list { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 14px; align-items: start; }
 
   @media (max-width: 640px) {
     html, body { overflow: auto; }
