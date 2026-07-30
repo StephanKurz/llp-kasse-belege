@@ -1,0 +1,383 @@
+// Legt aus einem vom Nutzer bestaetigten Beleg (Felder + Datei) in Easyverein sowohl einen
+// Beleg (Invoice mit isReceipt=true, PDF-Anhang) als auch die zugehoerige Buchung auf dem
+// Bankkonto "Kasse" an, verlinkt beide (relatedInvoice) und protokolliert das Ergebnis in
+// kasse_belege_log.
+//
+// Kontenmodell (Stand 2026-07-30, per Live-Abfrage gegen /bank-account/ und /booking/ ermittelt):
+// - Bankkonto "Kasse" hat die id 214741342 (Feld `bankAccount` auf Booking) - das entspricht dem,
+//   was im Verein als "die Kasse" bezeichnet wird (physischer Kassenbestand).
+// - Das Gegenkonto (`billingAccount`) kategorisiert die Ausgabe/Einnahme fachlich (z.B. Porto,
+//   Bueromaterial) - es ist NICHT das "Kasse"-Bilanzkonto selbst (das waere id 37039/Nr. 920 und
+//   wuerde eine Buchung gegen sich selbst ergeben). Die Liste unten sind die Konten, die in der
+//   echten Buchungshistorie des Kasse-Bankkontos tatsaechlich verwendet wurden.
+//
+// Beide EV-Endpunkte (/invoice/, /booking/) benoetigen den Finanz-Scope-Token EV_API_KEY_BOOKING
+// (bereits als Function-Secret gesetzt, siehe llp-jahresbudgets).
+
+const EV_BASE_URL = "https://easyverein.com/api/v2.0";
+
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+const KASSE_BANK_ACCOUNT_ID = 214741342;
+
+const BUCHUNGSKONTEN: Record<number, { id: number; name: string }> = {
+  2668: { id: 62809, name: "Betrieb Geschäftsstelle" },
+  2702: { id: 37048, name: "Porto" },
+  2800: { id: 37054, name: "Mitgliederpflege, -versammlung" },
+  705: { id: 54661, name: "Geldtransit" },
+  2701: { id: 37047, name: "Büromaterial" },
+  2412: { id: 37042, name: "Zuwendungen Dritter (zur freien Verfügung)" },
+  2704: { id: 37051, name: "Sonstige Kosten" },
+  2804: { id: 37056, name: "Bücher und Leselernmaterialien" },
+  2810: { id: 37057, name: "Öffentlichkeitsarbeit" },
+  2664: { id: 37046, name: "Einrichtung Geschäftsstelle" },
+};
+
+function jsonResponse(data: unknown, status: number): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+  });
+}
+
+function base64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+// Baut ein minimales, gueltiges einseitiges PDF, das ein JPEG per DCTDecode direkt einbettet
+// (kein Re-Encoding der Pixel noetig). Easyverein akzeptiert fuer Invoice-Anhaenge nur PDF, viele
+// Kassenbelege kommen aber als Foto (JPEG) vom Widget - daher dieser Wrapper statt einer externen
+// PDF-Bibliothek (die es fuer Deno Edge Functions ohnehin nicht in einer schlanken Form gibt).
+function wrapJpegAsPdf(jpeg: Uint8Array, width: number, height: number): Uint8Array {
+  const enc = new TextEncoder();
+  const parts: Uint8Array[] = [];
+  const offsets: number[] = [0, 0, 0, 0, 0, 0];
+  let pos = 0;
+
+  function push(bytes: Uint8Array) {
+    parts.push(bytes);
+    pos += bytes.length;
+  }
+  function pushStr(s: string) {
+    push(enc.encode(s));
+  }
+
+  pushStr("%PDF-1.4\n");
+
+  offsets[1] = pos;
+  pushStr(`1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n`);
+
+  offsets[2] = pos;
+  pushStr(`2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n`);
+
+  offsets[3] = pos;
+  pushStr(
+    `3 0 obj\n<< /Type /Page /Parent 2 0 R /Resources << /XObject << /Im0 4 0 R >> >> ` +
+      `/MediaBox [0 0 ${width} ${height}] /Contents 5 0 R >>\nendobj\n`,
+  );
+
+  offsets[4] = pos;
+  pushStr(
+    `4 0 obj\n<< /Type /XObject /Subtype /Image /Width ${width} /Height ${height} ` +
+      `/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`,
+  );
+  push(jpeg);
+  pushStr(`\nendstream\nendobj\n`);
+
+  const content = `q\n${width} 0 0 ${height} 0 0 cm\n/Im0 Do\nQ`;
+  offsets[5] = pos;
+  pushStr(`5 0 obj\n<< /Length ${content.length} >>\nstream\n${content}\nendstream\nendobj\n`);
+
+  const xrefOffset = pos;
+  pushStr(`xref\n0 6\n0000000000 65535 f \n`);
+  for (let i = 1; i <= 5; i++) {
+    pushStr(`${String(offsets[i]).padStart(10, "0")} 00000 n \n`);
+  }
+  pushStr(`trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`);
+
+  const total = parts.reduce((n, p) => n + p.length, 0);
+  const out = new Uint8Array(total);
+  let o = 0;
+  for (const p of parts) {
+    out.set(p, o);
+    o += p.length;
+  }
+  return out;
+}
+
+async function evRequest(
+  method: string,
+  url: string,
+  apiKey: string,
+  body?: unknown,
+): Promise<{ ok: boolean; status: number; json: any }> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const resp = await fetch(url, {
+      method,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    if (resp.status === 429) {
+      const retryAfter = Number(resp.headers.get("Retry-After") ?? "2");
+      await new Promise((r) => setTimeout(r, (retryAfter || 2) * 1000));
+      continue;
+    }
+    const text = await resp.text();
+    let json: any = null;
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch {
+      json = { raw: text };
+    }
+    return { ok: resp.ok, status: resp.status, json };
+  }
+  throw new Error("Easyverein: zu viele 429-Antworten, abgebrochen.");
+}
+
+async function evUploadAttachment(
+  invoiceId: number,
+  pdfBytes: Uint8Array,
+  filename: string,
+  apiKey: string,
+): Promise<{ ok: boolean; status: number; text: string }> {
+  const form = new FormData();
+  form.set("path", new Blob([pdfBytes], { type: "application/pdf" }), filename);
+
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const resp = await fetch(`${EV_BASE_URL}/invoice/${invoiceId}/`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: form,
+    });
+    if (resp.status === 429) {
+      const retryAfter = Number(resp.headers.get("Retry-After") ?? "2");
+      await new Promise((r) => setTimeout(r, (retryAfter || 2) * 1000));
+      continue;
+    }
+    const text = await resp.text();
+    return { ok: resp.ok, status: resp.status, text };
+  }
+  throw new Error("Easyverein: zu viele 429-Antworten beim Datei-Upload, abgebrochen.");
+}
+
+async function logResult(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  row: Record<string, unknown>,
+): Promise<void> {
+  await fetch(`${supabaseUrl}/rest/v1/kasse_belege_log`, {
+    method: "POST",
+    headers: {
+      apikey: serviceRoleKey,
+      Authorization: `Bearer ${serviceRoleKey}`,
+      "Content-Type": "application/json",
+      Prefer: "return=minimal",
+    },
+    body: JSON.stringify(row),
+  });
+}
+
+Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: CORS_HEADERS });
+  }
+
+  const evApiKey = Deno.env.get("EV_API_KEY_BOOKING");
+  const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+  const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  if (!evApiKey) {
+    return jsonResponse({ error: "EV_API_KEY_BOOKING ist als Function-Secret nicht konfiguriert." }, 500);
+  }
+
+  let body: any;
+  try {
+    body = await req.json();
+  } catch {
+    return jsonResponse({ error: "Ungueltiges JSON im Request-Body." }, 400);
+  }
+
+  const {
+    dateiname,
+    mimeType,
+    fileBase64,
+    width,
+    height,
+    aussteller,
+    datum,
+    betrag,
+    art,
+    belegnummer,
+    kurzbeschreibung,
+    buchungskonto_nr,
+  } = body ?? {};
+
+  if (!mimeType || !fileBase64) {
+    return jsonResponse({ error: "mimeType und fileBase64 sind erforderlich." }, 400);
+  }
+  if (!datum || typeof betrag !== "number" || betrag <= 0) {
+    return jsonResponse({ error: "datum und ein positiver betrag sind erforderlich." }, 400);
+  }
+  const artNorm = art === "revenue" ? "revenue" : "expense";
+  const konto = BUCHUNGSKONTEN[Number(buchungskonto_nr)];
+  if (!konto) {
+    return jsonResponse(
+      { error: `Unbekannte Buchungskonto-Nummer: ${buchungskonto_nr}. Erlaubt sind: ${Object.keys(BUCHUNGSKONTEN).join(", ")}` },
+      400,
+    );
+  }
+
+  let pdfBytes: Uint8Array;
+  try {
+    const rawBytes = base64ToBytes(fileBase64);
+    if (mimeType === "application/pdf") {
+      pdfBytes = rawBytes;
+    } else if (mimeType === "image/jpeg") {
+      if (!width || !height) {
+        return jsonResponse({ error: "width und height sind fuer JPEG-Belege erforderlich." }, 400);
+      }
+      pdfBytes = wrapJpegAsPdf(rawBytes, Number(width), Number(height));
+    } else {
+      return jsonResponse({ error: `Nicht unterstuetzter Dateityp: ${mimeType}. Erlaubt: PDF, JPEG.` }, 400);
+    }
+  } catch (e) {
+    return jsonResponse({ error: `Fehler beim Aufbereiten der Datei: ${e instanceof Error ? e.message : e}` }, 500);
+  }
+
+  const invNumber = belegnummer && String(belegnummer).trim()
+    ? String(belegnummer).trim()
+    : `KASSE-${datum}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+
+  const logBase = {
+    dateiname: dateiname ?? null,
+    betrag,
+    datum,
+    aussteller: aussteller ?? "",
+    art: artNorm,
+    buchungskonto_nr: Number(buchungskonto_nr),
+    buchungskonto_name: konto.name,
+    belegnummer: invNumber,
+    beschreibung: kurzbeschreibung ?? "",
+  };
+
+  // 1) Invoice (Beleg) im Entwurfsstatus anlegen
+  const createInvoiceBody = {
+    isDraft: true,
+    isReceipt: true,
+    kind: artNorm,
+    receiver: aussteller || "Unbekannt",
+    totalPrice: betrag,
+    tax: 0,
+    taxRate: 0,
+    gross: false,
+    date: datum,
+    invNumber,
+    description: kurzbeschreibung ?? "",
+  };
+
+  const invoiceRes = await evRequest("POST", `${EV_BASE_URL}/invoice/`, evApiKey, createInvoiceBody);
+  if (!invoiceRes.ok) {
+    await logResult(SUPABASE_URL, SERVICE_ROLE_KEY, {
+      ...logBase,
+      status: "fehler",
+      fehler: `Invoice-Erstellung fehlgeschlagen (${invoiceRes.status}): ${JSON.stringify(invoiceRes.json)}`,
+    });
+    return jsonResponse({ error: "Beleg (Invoice) konnte nicht angelegt werden.", details: invoiceRes.json }, 502);
+  }
+  const invoiceId = invoiceRes.json.id;
+
+  // 2) PDF-Anhang hochladen
+  const uploadRes = await evUploadAttachment(invoiceId, pdfBytes, dateiname || `beleg-${invoiceId}.pdf`, evApiKey);
+  if (!uploadRes.ok) {
+    await logResult(SUPABASE_URL, SERVICE_ROLE_KEY, {
+      ...logBase,
+      status: "fehler",
+      easyverein_invoice_id: invoiceId,
+      fehler: `Datei-Upload fehlgeschlagen (${uploadRes.status}): ${uploadRes.text}`,
+    });
+    return jsonResponse(
+      {
+        error: "Beleg wurde angelegt, aber der Datei-Upload ist fehlgeschlagen. Bitte in Easyverein pruefen.",
+        easyverein_invoice_id: invoiceId,
+        details: uploadRes.text,
+      },
+      502,
+    );
+  }
+
+  // 3) Entwurfsstatus aufheben
+  const undraftRes = await evRequest("PATCH", `${EV_BASE_URL}/invoice/${invoiceId}/`, evApiKey, { isDraft: false });
+  if (!undraftRes.ok) {
+    await logResult(SUPABASE_URL, SERVICE_ROLE_KEY, {
+      ...logBase,
+      status: "fehler",
+      easyverein_invoice_id: invoiceId,
+      fehler: `Entwurfsstatus konnte nicht aufgehoben werden (${undraftRes.status}): ${JSON.stringify(undraftRes.json)}`,
+    });
+    return jsonResponse(
+      {
+        error: "Beleg + Anhang wurden angelegt, aber der Entwurfsstatus konnte nicht aufgehoben werden. Bitte in Easyverein pruefen.",
+        easyverein_invoice_id: invoiceId,
+        details: undraftRes.json,
+      },
+      502,
+    );
+  }
+
+  // 4) Buchung auf Bankkonto "Kasse" anlegen, verknuepft mit dem Beleg
+  const amount = artNorm === "expense" ? -Math.abs(betrag) : Math.abs(betrag);
+  const createBookingBody = {
+    billingAccount: konto.id,
+    bankAccount: KASSE_BANK_ACCOUNT_ID,
+    amount,
+    date: `${datum}T00:00:00`,
+    receiver: aussteller || "",
+    description: kurzbeschreibung ?? "",
+    relatedInvoice: [invoiceId],
+  };
+
+  const bookingRes = await evRequest("POST", `${EV_BASE_URL}/booking/`, evApiKey, createBookingBody);
+  if (!bookingRes.ok) {
+    await logResult(SUPABASE_URL, SERVICE_ROLE_KEY, {
+      ...logBase,
+      status: "fehler",
+      easyverein_invoice_id: invoiceId,
+      fehler: `Buchung konnte nicht angelegt werden (${bookingRes.status}): ${JSON.stringify(bookingRes.json)}`,
+    });
+    return jsonResponse(
+      {
+        error: "Beleg wurde vollstaendig angelegt, aber die Buchung ist fehlgeschlagen. Bitte in Easyverein manuell nachbuchen.",
+        easyverein_invoice_id: invoiceId,
+        details: bookingRes.json,
+      },
+      502,
+    );
+  }
+  const bookingId = bookingRes.json.id;
+
+  await logResult(SUPABASE_URL, SERVICE_ROLE_KEY, {
+    ...logBase,
+    status: "angelegt",
+    easyverein_invoice_id: invoiceId,
+    easyverein_booking_id: bookingId,
+  });
+
+  return jsonResponse(
+    {
+      ok: true,
+      easyverein_invoice_id: invoiceId,
+      easyverein_booking_id: bookingId,
+      buchungskonto: konto.name,
+      betrag: amount,
+    },
+    200,
+  );
+});

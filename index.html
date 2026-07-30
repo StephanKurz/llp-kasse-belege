@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kassenbelege</title>
+<style>
+  :root {
+    --accent: #bd0010;
+    --border: #d7dce3;
+    --bg: #f7f8fa;
+    --text: #1f2937;
+    --muted: #6b7280;
+    --danger: #b3261e;
+    --ok: #2e7d32;
+    --card-bg: #fff;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    font-family: -apple-system, "Segoe UI", Arial, sans-serif;
+    color: var(--text);
+    background: var(--bg);
+  }
+  #app { max-width: 720px; margin: 0 auto; padding: 22px 20px 60px; }
+  h1 { font-size: 17px; margin: 0 0 4px; }
+  #subtitle { color: var(--muted); font-size: 12.5px; margin: 0 0 18px; line-height: 1.5; }
+
+  #dropzone {
+    border: 2px dashed var(--border); border-radius: 10px; background: var(--card-bg);
+    padding: 30px 16px; text-align: center; cursor: pointer; transition: border-color .15s;
+    font-size: 13.5px; color: var(--muted);
+  }
+  #dropzone.drag { border-color: var(--accent); color: var(--accent); }
+  #dropzone strong { color: var(--text); }
+  #file-input { display: none; }
+
+  #list { margin-top: 20px; display: flex; flex-direction: column; gap: 14px; }
+
+  .beleg-card {
+    background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 16px; font-size: 13.5px;
+  }
+  .beleg-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    margin-bottom: 10px;
+  }
+  .beleg-filename { font-weight: 600; word-break: break-all; }
+  .beleg-status { font-size: 11.5px; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+  .status-analysiere { background: #eef1f5; color: var(--muted); }
+  .status-pruefen { background: #fff4e5; color: #8a5300; }
+  .status-angelegt { background: #e8f5e9; color: var(--ok); }
+  .status-fehler { background: #fdecea; color: var(--danger); }
+
+  .field-row { display: grid; grid-template-columns: 110px 1fr; gap: 8px; align-items: center; margin-bottom: 7px; }
+  .field-row label { color: var(--muted); font-size: 12px; }
+  .field-row input, .field-row select {
+    font-size: 13.5px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px;
+    font-family: inherit; width: 100%;
+  }
+  .field-row input:disabled, .field-row select:disabled { background: #f3f4f6; color: var(--muted); }
+
+  .beleg-actions { margin-top: 10px; display: flex; align-items: center; gap: 10px; }
+  .btn {
+    background: var(--accent); color: #fff; border: none; border-radius: 6px;
+    padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .btn:disabled { opacity: 0.55; cursor: default; }
+  .btn:hover:not(:disabled) { filter: brightness(1.08); }
+
+  .beleg-msg { font-size: 12.5px; margin-top: 8px; }
+  .beleg-msg.err { color: var(--danger); }
+  .beleg-msg.ok { color: var(--ok); }
+  .beleg-msg.hint { color: var(--muted); }
+
+  .confidence-low { color: #8a5300; }
+</style>
+</head>
+<body>
+<div id="app">
+  <h1>Kassenbelege erfassen</h1>
+  <p id="subtitle">
+    Beleg (Foto oder PDF) hochladen - die Felder werden automatisch ausgelesen. Bitte vor dem
+    Anlegen prüfen und ggf. korrigieren. Nach Bestätigung werden in Easyverein automatisch ein
+    Beleg (mit angehängtem Foto/PDF) und die passende Buchung auf dem Bankkonto "Kasse" angelegt.
+  </p>
+
+  <div id="dropzone">
+    <div><strong>Beleg hierher ziehen</strong> oder klicken zum Auswählen</div>
+    <div style="margin-top:4px; font-size:11.5px;">JPG, PNG oder PDF - auch mehrere gleichzeitig</div>
+  </div>
+  <input type="file" id="file-input" accept="image/jpeg,image/png,application/pdf" multiple>
+
+  <div id="list"></div>
+</div>
+
+<script>
+  const BASE_URL = "https://cclcdhwnzkzciwjaclzt.supabase.co/functions/v1";
+  const ANALYSE_URL = `${BASE_URL}/kasse-beleg-analysieren`;
+  const ANLEGEN_URL = `${BASE_URL}/kasse-beleg-anlegen`;
+
+  const dropzone = document.getElementById("dropzone");
+  const fileInput = document.getElementById("file-input");
+  const list = document.getElementById("list");
+
+  dropzone.addEventListener("click", () => fileInput.click());
+  dropzone.addEventListener("dragover", (e) => { e.preventDefault(); dropzone.classList.add("drag"); });
+  dropzone.addEventListener("dragleave", () => dropzone.classList.remove("drag"));
+  dropzone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    dropzone.classList.remove("drag");
+    handleFiles(e.dataTransfer.files);
+  });
+  fileInput.addEventListener("change", (e) => {
+    handleFiles(e.target.files);
+    fileInput.value = "";
+  });
+
+  function handleFiles(fileList) {
+    for (const file of fileList) {
+      processFile(file);
+    }
+  }
+
+  function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(String(reader.result).split(",")[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  // Fotos werden im Browser auf eine vernuenftige Groesse herunterskaliert und als JPEG
+  // re-encodiert (auch PNGs, wegen Transparenz auf weissem Hintergrund) - liefert dabei auch
+  // gleich die Pixelmasse, die die Anlegen-Funktion zum Einbetten ins PDF braucht.
+  function imageFileToJpeg(file) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        const maxDim = 2000;
+        let { width, height } = img;
+        if (Math.max(width, height) > maxDim) {
+          const scale = maxDim / Math.max(width, height);
+          width = Math.round(width * scale);
+          height = Math.round(height * scale);
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+        canvas.toBlob(
+          (blob) => {
+            URL.revokeObjectURL(url);
+            if (!blob) return reject(new Error("Konnte Bild nicht konvertieren."));
+            resolve({ blob, width, height });
+          },
+          "image/jpeg",
+          0.85,
+        );
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error("Datei konnte nicht als Bild gelesen werden."));
+      };
+      img.src = url;
+    });
+  }
+
+  async function prepareFile(file) {
+    if (file.type === "application/pdf") {
+      const fileBase64 = await blobToBase64(file);
+      return { mimeType: "application/pdf", fileBase64, width: null, height: null };
+    }
+    const { blob, width, height } = await imageFileToJpeg(file);
+    const fileBase64 = await blobToBase64(blob);
+    return { mimeType: "image/jpeg", fileBase64, width, height };
+  }
+
+  function fieldRow(label, inputHtml) {
+    return `<div class="field-row"><label>${label}</label>${inputHtml}</div>`;
+  }
+
+  function euro(n) {
+    return Number(n).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  async function processFile(file) {
+    const cardId = "beleg-" + Math.random().toString(36).slice(2, 10);
+    const card = document.createElement("div");
+    card.className = "beleg-card";
+    card.id = cardId;
+    card.innerHTML = `
+      <div class="beleg-head">
+        <div class="beleg-filename">${file.name}</div>
+        <div class="beleg-status status-analysiere">Analysiere ...</div>
+      </div>
+      <div class="beleg-msg hint">Beleg wird gelesen und an Claude zur Analyse geschickt.</div>
+    `;
+    list.prepend(card);
+
+    let prepared;
+    try {
+      prepared = await prepareFile(file);
+    } catch (e) {
+      renderError(card, `Datei konnte nicht verarbeitet werden: ${e.message}`);
+      return;
+    }
+
+    let analyse;
+    try {
+      const resp = await fetch(ANALYSE_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mimeType: prepared.mimeType, fileBase64: prepared.fileBase64 }),
+      });
+      analyse = await resp.json();
+      if (!resp.ok) throw new Error(analyse.error || `Fehler ${resp.status}`);
+    } catch (e) {
+      renderError(card, `Analyse fehlgeschlagen: ${e.message}`);
+      return;
+    }
+
+    renderReviewForm(card, file, prepared, analyse);
+  }
+
+  function renderError(card, message) {
+    const statusEl = card.querySelector(".beleg-status");
+    statusEl.textContent = "Fehler";
+    statusEl.className = "beleg-status status-fehler";
+    card.querySelector(".beleg-msg")?.remove();
+    const msg = document.createElement("div");
+    msg.className = "beleg-msg err";
+    msg.textContent = message;
+    card.appendChild(msg);
+  }
+
+  function renderReviewForm(card, file, prepared, analyse) {
+    const statusEl = card.querySelector(".beleg-status");
+    statusEl.textContent = "Bitte prüfen";
+    statusEl.className = "beleg-status status-pruefen";
+
+    const optionsHtml = (analyse.buchungskonten_optionen || [])
+      .map((k) => `<option value="${k.nr}" ${k.nr === analyse.buchungskonto.nr ? "selected" : ""}>${k.name} (${k.nr})</option>`)
+      .join("");
+
+    const confidenceNote = analyse.confidence === "low"
+      ? `<div class="beleg-msg confidence-low">Erkennung unsicher - Datum und Betrag bitte besonders genau prüfen.</div>`
+      : "";
+
+    const formHtml = `
+      ${fieldRow("Aussteller", `<input type="text" class="f-aussteller" value="${(analyse.aussteller || "").replace(/"/g, "&quot;")}">`)}
+      ${fieldRow("Datum", `<input type="date" class="f-datum" value="${analyse.datum || ""}">`)}
+      ${fieldRow("Betrag (€)", `<input type="number" step="0.01" min="0.01" class="f-betrag" value="${analyse.betrag ?? ""}">`)}
+      ${fieldRow("Art", `<select class="f-art">
+          <option value="expense" ${analyse.art !== "revenue" ? "selected" : ""}>Ausgabe</option>
+          <option value="revenue" ${analyse.art === "revenue" ? "selected" : ""}>Einnahme</option>
+        </select>`)}
+      ${fieldRow("Belegnummer", `<input type="text" class="f-belegnummer" value="${(analyse.belegnummer || "").toString().replace(/"/g, "&quot;")}" placeholder="wird sonst automatisch vergeben">`)}
+      ${fieldRow("Beschreibung", `<input type="text" class="f-beschreibung" value="${(analyse.kurzbeschreibung || "").replace(/"/g, "&quot;")}">`)}
+      ${fieldRow("Buchungskonto", `<select class="f-konto">${optionsHtml}</select>`)}
+    `;
+
+    const formWrap = document.createElement("div");
+    formWrap.innerHTML = `
+      ${confidenceNote}
+      ${formHtml}
+      <div class="beleg-actions">
+        <button class="btn btn-anlegen">Beleg + Buchung anlegen</button>
+      </div>
+    `;
+    card.querySelector(".beleg-msg")?.remove();
+    card.appendChild(formWrap);
+
+    formWrap.querySelector(".btn-anlegen").addEventListener("click", async () => {
+      const btn = formWrap.querySelector(".btn-anlegen");
+      btn.disabled = true;
+      btn.textContent = "Lege an ...";
+      formWrap.querySelectorAll("input, select").forEach((el) => (el.disabled = true));
+
+      const payload = {
+        dateiname: file.name,
+        mimeType: prepared.mimeType,
+        fileBase64: prepared.fileBase64,
+        width: prepared.width,
+        height: prepared.height,
+        aussteller: formWrap.querySelector(".f-aussteller").value,
+        datum: formWrap.querySelector(".f-datum").value,
+        betrag: parseFloat(formWrap.querySelector(".f-betrag").value),
+        art: formWrap.querySelector(".f-art").value,
+        belegnummer: formWrap.querySelector(".f-belegnummer").value,
+        kurzbeschreibung: formWrap.querySelector(".f-beschreibung").value,
+        buchungskonto_nr: parseInt(formWrap.querySelector(".f-konto").value, 10),
+      };
+
+      try {
+        const resp = await fetch(ANLEGEN_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const result = await resp.json();
+        if (!resp.ok) throw new Error(result.error || `Fehler ${resp.status}`);
+
+        statusEl.textContent = "Angelegt";
+        statusEl.className = "beleg-status status-angelegt";
+        btn.remove();
+        const okMsg = document.createElement("div");
+        okMsg.className = "beleg-msg ok";
+        okMsg.textContent =
+          `Beleg (Invoice ${result.easyverein_invoice_id}) und Buchung ` +
+          `(${euro(result.betrag)} € auf "${result.buchungskonto}") in Easyverein angelegt.`;
+        formWrap.appendChild(okMsg);
+      } catch (e) {
+        statusEl.textContent = "Fehler";
+        statusEl.className = "beleg-status status-fehler";
+        btn.disabled = false;
+        btn.textContent = "Erneut versuchen";
+        formWrap.querySelectorAll("input, select").forEach((el) => (el.disabled = false));
+        const errMsg = document.createElement("div");
+        errMsg.className = "beleg-msg err";
+        errMsg.textContent = `Anlegen fehlgeschlagen: ${e.message}`;
+        formWrap.appendChild(errMsg);
+      }
+    });
+  }
+</script>
+</body>
+</html>
