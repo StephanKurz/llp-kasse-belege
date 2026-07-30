@@ -43,6 +43,34 @@ function jsonResponse(data: unknown, status: number): Response {
   });
 }
 
+// Easyverein liefert Validierungsfehler mal als Array von Strings (z.B. Eindeutigkeits-Konflikte:
+// ["Dieser Wert existiert bereits:  Wert: X, Feld: invNumber"]), mal als Objekt {feld: [meldung]}.
+// Macht daraus einen lesbaren deutschen Satz statt des generischen "konnte nicht angelegt werden".
+function evErrorText(json: any): string {
+  if (json == null) return "Unbekannter Fehler.";
+  if (Array.isArray(json)) return json.join(" ");
+  if (typeof json === "object") {
+    if (typeof json.raw === "string") return json.raw;
+    const parts: string[] = [];
+    for (const [key, val] of Object.entries(json)) {
+      parts.push(Array.isArray(val) ? `${key}: ${val.join(" ")}` : `${key}: ${val}`);
+    }
+    if (parts.length) return parts.join(" | ");
+  }
+  return String(json);
+}
+
+// Erkennt den Spezialfall "Belegnummer/invNumber bereits vergeben" (typischerweise durch
+// doppeltes Anlegen desselben Belegs) und gibt dafuer eine konkrete, verstaendliche Meldung
+// statt des generischen Easyverein-Textes zurueck.
+function friendlyInvoiceError(json: any, invNumber: string): string {
+  const text = evErrorText(json);
+  if (text.includes("existiert bereits") && text.includes("invNumber")) {
+    return `Dieser Beleg scheint bereits angelegt zu sein - die Belegnummer "${invNumber}" ist in Easyverein schon vergeben. Bitte in Easyverein pruefen, ob der Beleg schon existiert, bevor er erneut angelegt wird.`;
+  }
+  return `Easyverein-Fehler beim Anlegen des Belegs: ${text}`;
+}
+
 function base64ToBytes(b64: string): Uint8Array {
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);
@@ -285,12 +313,13 @@ Deno.serve(async (req: Request) => {
 
   const invoiceRes = await evRequest("POST", `${EV_BASE_URL}/invoice/`, evApiKey, createInvoiceBody);
   if (!invoiceRes.ok) {
+    const reason = friendlyInvoiceError(invoiceRes.json, invNumber);
     await logResult(SUPABASE_URL, SERVICE_ROLE_KEY, {
       ...logBase,
       status: "fehler",
-      fehler: `Invoice-Erstellung fehlgeschlagen (${invoiceRes.status}): ${JSON.stringify(invoiceRes.json)}`,
+      fehler: `Invoice-Erstellung fehlgeschlagen (${invoiceRes.status}): ${reason}`,
     });
-    return jsonResponse({ error: "Beleg (Invoice) konnte nicht angelegt werden.", details: invoiceRes.json }, 502);
+    return jsonResponse({ error: reason, details: invoiceRes.json }, 502);
   }
   const invoiceId = invoiceRes.json.id;
 
@@ -309,15 +338,16 @@ Deno.serve(async (req: Request) => {
   };
   const itemRes = await evRequest("POST", `${EV_BASE_URL}/invoice-item/`, evApiKey, createItemBody);
   if (!itemRes.ok) {
+    const reason = evErrorText(itemRes.json);
     await logResult(SUPABASE_URL, SERVICE_ROLE_KEY, {
       ...logBase,
       status: "fehler",
       easyverein_invoice_id: invoiceId,
-      fehler: `Belegposition konnte nicht angelegt werden (${itemRes.status}): ${JSON.stringify(itemRes.json)}`,
+      fehler: `Belegposition konnte nicht angelegt werden (${itemRes.status}): ${reason}`,
     });
     return jsonResponse(
       {
-        error: "Beleg wurde als Entwurf angelegt, aber die Belegposition ist fehlgeschlagen. Bitte in Easyverein pruefen.",
+        error: `Beleg wurde als Entwurf angelegt (id ${invoiceId}), aber die Belegposition ist fehlgeschlagen: ${reason}. Bitte in Easyverein pruefen.`,
         easyverein_invoice_id: invoiceId,
         details: itemRes.json,
       },
@@ -336,7 +366,7 @@ Deno.serve(async (req: Request) => {
     });
     return jsonResponse(
       {
-        error: "Beleg wurde angelegt, aber der Datei-Upload ist fehlgeschlagen. Bitte in Easyverein pruefen.",
+        error: `Beleg wurde angelegt (id ${invoiceId}), aber der Datei-Upload ist fehlgeschlagen: ${uploadRes.text}. Bitte in Easyverein pruefen.`,
         easyverein_invoice_id: invoiceId,
         details: uploadRes.text,
       },
@@ -347,15 +377,16 @@ Deno.serve(async (req: Request) => {
   // 3) Entwurfsstatus aufheben
   const undraftRes = await evRequest("PATCH", `${EV_BASE_URL}/invoice/${invoiceId}/`, evApiKey, { isDraft: false });
   if (!undraftRes.ok) {
+    const reason = evErrorText(undraftRes.json);
     await logResult(SUPABASE_URL, SERVICE_ROLE_KEY, {
       ...logBase,
       status: "fehler",
       easyverein_invoice_id: invoiceId,
-      fehler: `Entwurfsstatus konnte nicht aufgehoben werden (${undraftRes.status}): ${JSON.stringify(undraftRes.json)}`,
+      fehler: `Entwurfsstatus konnte nicht aufgehoben werden (${undraftRes.status}): ${reason}`,
     });
     return jsonResponse(
       {
-        error: "Beleg + Anhang wurden angelegt, aber der Entwurfsstatus konnte nicht aufgehoben werden. Bitte in Easyverein pruefen.",
+        error: `Beleg + Anhang wurden angelegt (id ${invoiceId}), aber der Entwurfsstatus konnte nicht aufgehoben werden: ${reason}. Bitte in Easyverein pruefen.`,
         easyverein_invoice_id: invoiceId,
         details: undraftRes.json,
       },
@@ -377,15 +408,16 @@ Deno.serve(async (req: Request) => {
 
   const bookingRes = await evRequest("POST", `${EV_BASE_URL}/booking/`, evApiKey, createBookingBody);
   if (!bookingRes.ok) {
+    const reason = evErrorText(bookingRes.json);
     await logResult(SUPABASE_URL, SERVICE_ROLE_KEY, {
       ...logBase,
       status: "fehler",
       easyverein_invoice_id: invoiceId,
-      fehler: `Buchung konnte nicht angelegt werden (${bookingRes.status}): ${JSON.stringify(bookingRes.json)}`,
+      fehler: `Buchung konnte nicht angelegt werden (${bookingRes.status}): ${reason}`,
     });
     return jsonResponse(
       {
-        error: "Beleg wurde vollstaendig angelegt, aber die Buchung ist fehlgeschlagen. Bitte in Easyverein manuell nachbuchen.",
+        error: `Beleg (id ${invoiceId}) wurde vollstaendig angelegt, aber die Buchung ist fehlgeschlagen: ${reason}. Bitte in Easyverein manuell nachbuchen.`,
         easyverein_invoice_id: invoiceId,
         details: bookingRes.json,
       },
