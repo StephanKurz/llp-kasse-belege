@@ -294,6 +294,37 @@ Deno.serve(async (req: Request) => {
   }
   const invoiceId = invoiceRes.json.id;
 
+  // 1b) Belegposition (InvoiceItem) anlegen - die EV API verlangt mindestens eine Position,
+  // bevor der Entwurfsstatus aufgehoben werden kann (steuer-/brutto-Einstellungen muessen zur
+  // Invoice passen, siehe python-easyverein KNOWN_ISSUES). Titel "Belegposition" entspricht der
+  // Konvention, die in der bestehenden Buchungshistorie dieses Vereins bereits verwendet wird.
+  const createItemBody = {
+    relatedInvoice: invoiceId,
+    title: "Belegposition",
+    quantity: 1,
+    unitPrice: betrag,
+    totalPrice: betrag,
+    taxRate: 0,
+    gross: false,
+  };
+  const itemRes = await evRequest("POST", `${EV_BASE_URL}/invoice-item/`, evApiKey, createItemBody);
+  if (!itemRes.ok) {
+    await logResult(SUPABASE_URL, SERVICE_ROLE_KEY, {
+      ...logBase,
+      status: "fehler",
+      easyverein_invoice_id: invoiceId,
+      fehler: `Belegposition konnte nicht angelegt werden (${itemRes.status}): ${JSON.stringify(itemRes.json)}`,
+    });
+    return jsonResponse(
+      {
+        error: "Beleg wurde als Entwurf angelegt, aber die Belegposition ist fehlgeschlagen. Bitte in Easyverein pruefen.",
+        easyverein_invoice_id: invoiceId,
+        details: itemRes.json,
+      },
+      502,
+    );
+  }
+
   // 2) PDF-Anhang hochladen
   const uploadRes = await evUploadAttachment(invoiceId, pdfBytes, dateiname || `beleg-${invoiceId}.pdf`, evApiKey);
   if (!uploadRes.ok) {
