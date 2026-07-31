@@ -126,11 +126,14 @@
   .addr-search-results:not(:empty) { margin-top: 4px; }
   .addr-result {
     padding: 5px 7px; border-radius: 5px; cursor: pointer; font-size: 12.5px;
-    display: flex; justify-content: space-between; gap: 8px;
+    display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
   }
   .addr-result:hover { background: var(--bg); }
   .addr-result-tag { color: var(--muted); font-size: 11px; flex: none; }
   .addr-hint { color: var(--muted); font-size: 12px; padding: 4px 2px; }
+  .addr-hint-new { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .addr-new-check { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text); cursor: pointer; white-space: nowrap; }
+  .addr-new-check input { width: auto; flex: none; cursor: pointer; }
 
   .row-actions { margin-top: 10px; display: flex; align-items: center; gap: 10px; }
 
@@ -350,7 +353,7 @@
         aussteller: "", datum: "", betrag: "", art: "expense", belegtyp: "kassenbeleg",
         belegnummer: "", kurzbeschreibung: "", buchungskonto_nr: null,
         iban: null, bic: null, strasse: null, plz: null, ort: null,
-        contactOverrideId: null, contactOverrideName: null,
+        contactOverrideId: null, contactOverrideName: null, addrCreateNew: false,
       },
       message: null,
       result: null,
@@ -401,6 +404,7 @@
         ort: analyse.ort || null,
         contactOverrideId: null,
         contactOverrideName: null,
+        addrCreateNew: false,
       };
       // Das Adressfeld ist immer offen (kein Toggle mehr, der die Suche anstoesst) - deshalb hier
       // direkt mit dem erkannten Aussteller als Suchbegriff starten, wenn es sich um eine Rechnung
@@ -462,7 +466,10 @@
   }
 
   async function anlegenAlle() {
-    const ready = receipts.filter((r) => r.status === "pruefen");
+    // Rechnungen ohne bestaetigte Zahlungsadresse werden uebersprungen (dieselbe Sperre wie beim
+    // einzelnen "Beleg anlegen"-Schalter, siehe rowBodyHtml) - sonst wuerde "Alles anlegen" die
+    // Sicherheitsabfrage umgehen.
+    const ready = receipts.filter((r) => r.status === "pruefen" && !(r.fields.belegtyp === "rechnung" && !isAddressConfirmed(r)));
     if (ready.length === 0) return;
     anlegenAlleBtn.disabled = true;
     for (let i = 0; i < ready.length; i++) {
@@ -510,34 +517,53 @@
   // ueber die Trefferliste kann der Nutzer entweder die automatisch erkannte Adresse bestaetigen
   // oder stattdessen z.B. ein Mitglied waehlen (etwa wenn eine Rechnung bereits privat verauslagt
   // wurde und die Erstattung an das Mitglied statt an den Lieferanten gehen soll). Das rote "X"
-  // bzw. der gruene Haken vor dem Feld zeigt nur, ob bereits ein Treffer aktiv bestaetigt wurde
-  // (per Klick in der Trefferliste) - Tippen im Feld hebt eine Bestaetigung wieder auf (siehe
-  // input-Listener), das Leeren des Felds entspricht damit gedanklich einem Zuruecksetzen.
-  function addressResultsHtml(results) {
-    if (!results || results.length === 0) return `<div class="addr-hint">Keine Treffer.</div>`;
-    return results
-      .map(
-        (c) => `
-      <div class="addr-result" data-action="addr-select" data-contact-id="${c.id}" data-contact-name="${esc(c.name)}">
-        <span>${esc(c.name)}${c.ort ? " · " + esc(c.ort) : ""}</span>
-        <span class="addr-result-tag">${c.istMitglied ? "Mitglied" : ""}</span>
-      </div>`,
-      )
-      .join("");
+  // bzw. der gruene Haken vor dem Feld zeigt nur, ob die Zahlungsadresse aktiv bestaetigt wurde -
+  // entweder per Klick in der Trefferliste, oder (wenn es "Keine Treffer" gibt) per Haekchen bei
+  // "neu anlegen". Tippen im Feld hebt eine Bestaetigung wieder auf (siehe input-Listener), das
+  // Leeren des Felds entspricht damit gedanklich einem Zuruecksetzen. Solange nichts bestaetigt
+  // ist, bleibt der "Beleg anlegen"-Schalter gesperrt (siehe rowBodyHtml) - so wird nie versehentlich
+  // ohne bewusste Zahlungsziel-Entscheidung angelegt.
+  function isAddressConfirmed(r) {
+    return !!(r.fields.contactOverrideId || r.fields.addrCreateNew);
+  }
+
+  function addressResultsHtml(r) {
+    const results = r.addrSearchResults;
+    if (results && results.length > 0) {
+      return results
+        .map(
+          (c) => `
+        <div class="addr-result" data-action="addr-select" data-contact-id="${c.id}" data-contact-name="${esc(c.name)}">
+          <span>${esc(c.name)}${c.ort ? " · " + esc(c.ort) : ""}</span>
+          <span class="addr-result-tag">${c.istMitglied ? "Mitglied" : ""}</span>
+        </div>`,
+        )
+        .join("");
+    }
+    if (r.addrSearchQuery.trim().length < 2) {
+      return `<div class="addr-hint">Mindestens 2 Zeichen eingeben …</div>`;
+    }
+    return `<div class="addr-hint addr-hint-new">
+        <span>Keine Treffer.</span>
+        <label class="addr-new-check">
+          <input type="checkbox" data-addr-create-new ${r.fields.addrCreateNew ? "checked" : ""}>
+          neu anlegen
+        </label>
+      </div>`;
   }
 
   function addressFieldHtml(r, disabled) {
-    const confirmed = !!r.fields.contactOverrideId;
+    const confirmed = isAddressConfirmed(r);
     const icon = confirmed
       ? `<span class="addr-icon yes" title="Adresse bestätigt">✓</span>`
       : `<span class="addr-icon no" title="Noch keine Adresse bestätigt">✕</span>`;
-    const value = confirmed ? r.fields.contactOverrideName : r.addrSearchQuery;
+    const value = r.fields.contactOverrideId ? r.fields.contactOverrideName : r.addrSearchQuery;
     return `<div class="addr-block">
         <div class="addr-input-row">
           ${icon}
           <input type="text" class="addr-search-input" placeholder="Name eingeben (Mitglied oder Firma) …" value="${esc(value)}" ${disabled ? "disabled" : ""}>
         </div>
-        <div class="addr-search-results">${addressResultsHtml(r.addrSearchResults)}</div>
+        <div class="addr-search-results">${addressResultsHtml(r)}</div>
       </div>`;
   }
 
@@ -561,7 +587,7 @@
     // Sucheingabefeld beim Tippen den Fokus.
     const row = list.querySelector(`.beleg-row[data-id="${r.id}"]`);
     const container = row && row.querySelector(".addr-search-results");
-    if (container) container.innerHTML = addressResultsHtml(r.addrSearchResults);
+    if (container) container.innerHTML = addressResultsHtml(r);
   }
 
   function rowBodyHtml(r) {
@@ -596,10 +622,14 @@
       ${fieldRowHtml(r.id, "Buchungskonto", "buchungskonto_nr", `<select data-id="${r.id}" data-field="buchungskonto_nr" ${disabled ? "disabled" : ""}>${optionsHtml}</select>`)}
     `;
 
-    const anlegenLabel = r.fields.belegtyp === "rechnung" ? "Nur Beleg anlegen" : "Beleg + Buchung anlegen";
+    const anlegenLabel = r.fields.belegtyp === "rechnung" ? "Beleg anlegen" : "Beleg + Buchung anlegen";
+    // Bei Rechnungen ist "Beleg anlegen" gesperrt, solange die Zahlungsadresse nicht bestaetigt
+    // ist (rotes X) - erst nach Bestaetigung (gruener Haken, per Trefferauswahl oder "neu anlegen")
+    // wird der Schalter aktiv. Bei Kassenbelegen gibt es kein Adressfeld, daher keine Sperre.
+    const anlegenGesperrt = r.fields.belegtyp === "rechnung" && !isAddressConfirmed(r);
     let actions = "";
     if (r.status === "pruefen") {
-      actions = `<div class="row-actions"><button class="btn" data-action="anlegen">${anlegenLabel}</button></div>`;
+      actions = `<div class="row-actions"><button class="btn" data-action="anlegen" ${anlegenGesperrt ? "disabled" : ""}>${anlegenLabel}</button></div>`;
     } else if (r.status === "sende") {
       actions = `<div class="row-actions"><button class="btn" disabled>Lege an …</button></div>`;
     } else if (r.status === "anlegen_fehler") {
@@ -698,18 +728,22 @@
     if (!r) return;
 
     if (el.classList.contains("addr-search-input")) {
-      // Tippen hebt eine zuvor per Klick bestaetigte Adresse wieder auf (das Leeren/Aendern
-      // des Namens entspricht gedanklich einem Zuruecksetzen) - dafuer wird nur das Icon gezielt
-      // aktualisiert, nicht renderList() aufgerufen, sonst verliert das Feld beim Tippen den Fokus.
-      if (r.fields.contactOverrideId) {
+      // Tippen hebt eine zuvor bestaetigte Adresse (Trefferauswahl oder "neu anlegen") wieder auf
+      // (das Aendern des Namens entspricht gedanklich einem Zuruecksetzen) - dafuer wird nur das
+      // Icon gezielt aktualisiert, nicht renderList() aufgerufen, sonst verliert das Feld beim
+      // Tippen den Fokus.
+      if (isAddressConfirmed(r)) {
         r.fields.contactOverrideId = null;
         r.fields.contactOverrideName = null;
+        r.fields.addrCreateNew = false;
         const icon = row.querySelector(".addr-icon");
         if (icon) {
           icon.className = "addr-icon no";
           icon.textContent = "✕";
           icon.title = "Noch keine Adresse bestätigt";
         }
+        const anlegenBtn = row.querySelector('[data-action="anlegen"]');
+        if (anlegenBtn) anlegenBtn.disabled = true;
       }
       // Debounced Live-Suche - aktualisiert bewusst nur den Ergebnis-Container (siehe
       // performAddressSearch), kein renderList() hier, sonst verliert das Feld beim Tippen
@@ -730,9 +764,19 @@
   // Neu-Rendern. Kein Fokusverlust-Risiko, da es ein Auswahlfeld ist, kein Text-Eingabefeld.
   list.addEventListener("change", (e) => {
     const el = e.target;
-    if (!el.dataset.belegtyp) return;
     const row = el.closest(".beleg-row");
-    const r = receipts.find((x) => x.id === row.dataset.id);
+    const r = row && receipts.find((x) => x.id === row.dataset.id);
+
+    if (r && el.hasAttribute("data-addr-create-new")) {
+      // "neu anlegen" ist die Bestaetigung fuer den Fall "Keine Treffer" - zaehlt genauso als
+      // bestaetigte Zahlungsadresse wie eine Trefferauswahl (siehe isAddressConfirmed) und
+      // schaltet damit den "Beleg anlegen"-Schalter frei.
+      r.fields.addrCreateNew = el.checked;
+      renderList();
+      return;
+    }
+
+    if (!el.dataset.belegtyp) return;
     if (r && el.checked) {
       // Nur auf ein Ankreuzen reagieren, nicht auf ein Abwaehlen - so bleibt immer genau einer
       // der beiden Belegtypen aktiv (wie bei Radiobuttons), obwohl es technisch zwei
