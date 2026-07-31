@@ -48,29 +48,34 @@
   .btn-secondary:disabled { opacity: 0.5; cursor: default; }
   .btn-secondary:hover:not(:disabled) { background: var(--bg); }
 
-  #body { flex: 1 1 auto; display: flex; gap: 16px; padding: 16px 20px; overflow: hidden; }
+  /* Feste 50/50-Aufteilung statt seitenverhaeltnis-abhaengiger Breite: auf grossen Bildschirmen
+     bekommt die Vorschau dadurch reichlich Platz, und die Aufteilung aendert sich nicht mehr je
+     nach ausgewaehltem Beleg (behebt auch den Spalten-Reflow der Liste von vorher). */
+  #body { flex: 1 1 auto; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px 20px; overflow: hidden; }
 
-  #list-pane { flex: 1 1 auto; min-width: 200px; overflow-y: auto; }
-  #list { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 8px; align-content: start; }
+  #list-pane { min-width: 0; overflow-y: auto; }
+  /* Immer exakt 2 Spalten, auch wenn eine Kachel aufgeklappt ist - keine Spaltenzahl-Aenderung
+     mehr beim Oeffnen (die aufgeklappte Kachel bleibt in ihrer normalen Rasterzelle, wird nur
+     hoeher, nicht breiter). */
+  #list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; align-content: start; }
   #list-empty { color: var(--muted); font-size: 13px; }
 
-  /* Breite wird gezielt in JS gesetzt (computePreviewWidth) - hier nur eine Sicherheitsgrenze
-     relativ zur verfuegbaren Breite, falls die Einbettung insgesamt schmal ist. Bewusst KEIN
-     max-height auf der Pane selbst: die Hoehe darf ueber den sichtbaren Bereich hinauswachsen
-     (lange Belege), overflow-y:auto laesst dann NUR die Vorschau scrollen, nicht die Liste. */
+  /* Bewusst KEIN max-height auf der Pane selbst: die Hoehe darf ueber den sichtbaren Bereich
+     hinauswachsen (lange Belege), overflow-y:auto laesst dann NUR die Vorschau scrollen, nicht
+     die Liste. */
   #preview-pane {
-    flex: 0 0 auto; max-width: 70%; min-width: 220px; overflow-y: auto; overflow-x: hidden;
+    min-width: 0; overflow-y: auto; overflow-x: hidden;
     border: 1px solid var(--border); border-radius: 10px; background: #eceef1;
-    display: flex; align-items: flex-start; justify-content: center; padding: 10px;
+    padding: 10px;
   }
-  #preview-pane.empty { align-items: center; color: var(--muted); font-size: 13px; text-align: center; }
+  #preview-pane.empty { display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 13px; text-align: center; }
   #preview-pane img, #preview-pane embed { width: 100%; height: auto; display: block; border: none; }
 
   .beleg-row {
     background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px;
     padding: 10px 12px; font-size: 13.5px;
   }
-  .beleg-row.open { grid-column: 1 / -1; border-color: var(--accent); }
+  .beleg-row.open { border-color: var(--accent); }
 
   .row-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: pointer; }
   .row-header-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -112,9 +117,9 @@
 
   @media (max-width: 860px) {
     html, body { overflow: auto; }
-    #body { flex-direction: column; overflow: visible; }
+    #body { grid-template-columns: 1fr; overflow: visible; }
     #list-pane { max-height: 38vh; }
-    #preview-pane { max-width: 100%; width: 100%; }
+    #list { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
   }
 </style>
 </head>
@@ -502,29 +507,19 @@
       .join("");
   }
 
-  // Bestimmt die Breite der Vorschau-Pane aus dem Seitenverhaeltnis des Belegs. Schmale/hohe
-  // Belege (Kassenbons) bekommen eine feste, gut lesbare Mindestbreite statt - wie zuvor - anhand
-  // einer Hoehenbegrenzung auf eine winzige Breite zusammengestaucht zu werden; breite/quere
-  // Dokumente duerfen entsprechend mehr Breite beanspruchen. Die Hoehe ergibt sich danach von
-  // selbst (aspect-ratio) und darf beliebig lang werden - die Pane scrollt dafuer eigenstaendig.
-  function computePreviewWidth(aspect) {
-    const MIN_W = 460;
-    const MAX_W = 820;
-    if (aspect <= 1) return MIN_W;
-    return Math.min(MAX_W, Math.round(MIN_W * aspect));
-  }
-
+  // Die Pane-Breite ist jetzt fest 50% (siehe #body-Grid) statt vom Seitenverhaeltnis abhaengig -
+  // die Breite des Mediums selbst folgt einfach width:100% der Pane (CSS). Nur die Hoehe ergibt
+  // sich aus dem Seitenverhaeltnis (aspect-ratio) und darf beliebig lang werden - die Pane
+  // scrollt dafuer eigenstaendig, unabhaengig von der Liste.
   function renderPreview() {
     const r = receipts.find((x) => x.id === openId);
     if (!r || !r.previewUrl) {
       previewPane.classList.add("empty");
-      previewPane.style.width = "";
       previewPane.innerHTML = `<div>Beleg auswählen, um die Vorschau zu sehen.</div>`;
       return;
     }
     previewPane.classList.remove("empty");
     const aspect = r.previewAspect || 0.71;
-    previewPane.style.width = computePreviewWidth(aspect) + "px";
     const style = `aspect-ratio:${aspect};`;
     if (r.prepared && r.prepared.mimeType === "application/pdf") {
       previewPane.innerHTML = `<embed type="application/pdf" src="${r.previewUrl}" style="${style}">`;
