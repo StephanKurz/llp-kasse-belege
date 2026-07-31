@@ -104,6 +104,10 @@
   }
   .field-row input:disabled, .field-row select:disabled { background: #f3f4f6; color: var(--muted); }
 
+  .belegtyp-toggle { display: flex; gap: 14px; }
+  .belegtyp-check { display: inline-flex; align-items: center; gap: 5px; font-size: 13.5px; cursor: pointer; }
+  .belegtyp-check input { width: auto; flex: none; cursor: pointer; }
+
   .row-actions { margin-top: 10px; display: flex; align-items: center; gap: 10px; }
 
   .row-msg { font-size: 12.5px; margin-top: 8px; }
@@ -460,10 +464,10 @@
           <option value="expense" ${r.fields.art !== "revenue" ? "selected" : ""}>Ausgabe</option>
           <option value="revenue" ${r.fields.art === "revenue" ? "selected" : ""}>Einnahme</option>
         </select>`)}
-      ${fieldRowHtml(r.id, "Beleg-Typ", "belegtyp", `<select data-id="${r.id}" data-field="belegtyp" ${disabled ? "disabled" : ""}>
-          <option value="kassenbeleg" ${r.fields.belegtyp !== "rechnung" ? "selected" : ""}>Kassenbeleg (wird gebucht)</option>
-          <option value="rechnung" ${r.fields.belegtyp === "rechnung" ? "selected" : ""}>Rechnung (nur Beleg, keine Buchung)</option>
-        </select>`)}
+      ${fieldRowHtml(r.id, "Beleg-Typ", "belegtyp", `<div class="belegtyp-toggle">
+          <label class="belegtyp-check"><input type="checkbox" data-id="${r.id}" data-belegtyp="kassenbeleg" ${r.fields.belegtyp !== "rechnung" ? "checked" : ""} ${disabled ? "disabled" : ""}> Kassenbeleg</label>
+          <label class="belegtyp-check"><input type="checkbox" data-id="${r.id}" data-belegtyp="rechnung" ${r.fields.belegtyp === "rechnung" ? "checked" : ""} ${disabled ? "disabled" : ""}> Rechnung</label>
+        </div>`)}
       ${fieldRowHtml(r.id, "Belegnummer", "belegnummer", `<input type="text" data-id="${r.id}" data-field="belegnummer" value="${esc(r.fields.belegnummer)}" placeholder="wird sonst automatisch vergeben" ${disabled ? "disabled" : ""}>`)}
       ${fieldRowHtml(r.id, "Beschreibung", "kurzbeschreibung", `<input type="text" data-id="${r.id}" data-field="kurzbeschreibung" value="${esc(r.fields.kurzbeschreibung)}" ${disabled ? "disabled" : ""}>`)}
       ${fieldRowHtml(r.id, "Buchungskonto", "buchungskonto_nr", `<select data-id="${r.id}" data-field="buchungskonto_nr" ${disabled ? "disabled" : ""}>${optionsHtml}</select>`)}
@@ -569,13 +573,16 @@
   // Neu-Rendern. Kein Fokusverlust-Risiko, da es ein Auswahlfeld ist, kein Text-Eingabefeld.
   list.addEventListener("change", (e) => {
     const el = e.target;
-    if (el.dataset.field !== "belegtyp") return;
+    if (!el.dataset.belegtyp) return;
     const row = el.closest(".beleg-row");
     const r = receipts.find((x) => x.id === row.dataset.id);
-    if (r) {
-      r.fields.belegtyp = el.value;
-      renderList();
+    if (r && el.checked) {
+      // Nur auf ein Ankreuzen reagieren, nicht auf ein Abwaehlen - so bleibt immer genau einer
+      // der beiden Belegtypen aktiv (wie bei Radiobuttons), obwohl es technisch zwei
+      // unabhaengige Checkboxen sind (auf Nutzerwunsch statt Dropdown, fuer schnellere Bedienung).
+      r.fields.belegtyp = el.dataset.belegtyp;
     }
+    renderList();
   });
 
   renderList();
