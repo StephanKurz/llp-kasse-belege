@@ -3,14 +3,11 @@
 // (falls auf dem Beleg sichtbar), eine Kurzbeschreibung sowie einen Vorschlag fuer das
 // Buchungskonto (Gegenkonto) aus der festen Liste unten - diese Liste wurde am 2026-07-30 aus der
 // tatsaechlichen Buchungshistorie des Bankkontos "Kasse" abgeleitet (siehe kasse-beleg-anlegen.ts,
-// dort ist dieselbe Liste zur Validierung nochmal hinterlegt). Zusaetzlich (fuer Rechnungen
-// relevant): sucht im gemeinsamen Easyverein-Adressbuch (/contact-details/) nach dem Aussteller,
-// damit das Widget schon vor dem Anlegen anzeigen kann, ob die Adresse erkannt wurde (siehe
-// kasse-beleg-anlegen.ts fuer das eigentliche Verknuepfen/Anlegen beim Absenden). Reine Analyse,
-// legt selbst noch nichts in Easyverein an - das uebernimmt kasse-beleg-anlegen nach Bestaetigung
-// im Widget.
-
-const EV_BASE_URL = "https://easyverein.com/api/v2.0";
+// dort ist dieselbe Liste zur Validierung nochmal hinterlegt). Bei Rechnungen extrahiert Claude
+// zusaetzlich IBAN/BIC/Anschrift des Ausstellers, falls sichtbar - die Adressbuch-Suche selbst
+// macht das Widget live ueber die Funktion kasse-adresse-suchen (siehe dort), nicht diese Funktion.
+// Reine Analyse, legt selbst noch nichts in Easyverein an - das uebernimmt kasse-beleg-anlegen nach
+// Bestaetigung im Widget.
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -49,9 +46,6 @@ Deno.serve(async (req: Request) => {
   if (!apiKey) {
     return jsonResponse({ error: "ANTHROPIC_API_KEY ist als Function-Secret nicht konfiguriert." }, 500);
   }
-  // Nicht hart erforderlich - ohne diesen Key wird die Adressbuch-Suche einfach uebersprungen
-  // (adressbuch bleibt null), der Rest der Analyse funktioniert trotzdem.
-  const evApiKey = Deno.env.get("EV_API_KEY_BOOKING");
 
   try {
     const body = await req.json();
@@ -145,29 +139,6 @@ Deno.serve(async (req: Request) => {
     const konto = BUCHUNGSKONTEN.find((k) => k.nr === Number(parsed.buchungskonto_nr)) ?? BUCHUNGSKONTEN[0];
     const aussteller = String(parsed.aussteller ?? "");
 
-    // Adressbuch-Suche (nur Vorschau fuer die Anzeige im Widget - das eigentliche Verknuepfen
-    // bzw. Neuanlegen passiert erst beim Absenden in kasse-beleg-anlegen). Schlaegt die Suche
-    // fehl oder ist kein EV-Key konfiguriert, bleibt adressbuch einfach null statt die ganze
-    // Analyse abzubrechen.
-    let adressbuch: { gefunden: boolean; id: number; name: string } | null = null;
-    if (evApiKey && aussteller.trim()) {
-      try {
-        const searchResp = await fetch(
-          `${EV_BASE_URL}/contact-details/?search=${encodeURIComponent(aussteller)}&limit=1`,
-          { headers: { Authorization: `Bearer ${evApiKey}` } },
-        );
-        if (searchResp.ok) {
-          const searchData = await searchResp.json();
-          const match = (searchData.results ?? [])[0];
-          if (match) {
-            adressbuch = { gefunden: true, id: match.id, name: match.name || match.companyName || aussteller };
-          }
-        }
-      } catch {
-        // Adressbuch-Suche ist ein Komfort-Feature - Fehler hier duerfen die Analyse nicht kippen.
-      }
-    }
-
     return jsonResponse(
       {
         aussteller,
@@ -185,7 +156,6 @@ Deno.serve(async (req: Request) => {
         strasse: parsed.strasse ?? null,
         plz: parsed.plz ?? null,
         ort: parsed.ort ?? null,
-        adressbuch,
       },
       200,
     );

@@ -108,21 +108,22 @@
   .belegtyp-check { display: inline-flex; align-items: center; gap: 5px; font-size: 13.5px; cursor: pointer; }
   .belegtyp-check input { width: auto; flex: none; cursor: pointer; }
 
-  .addr-block { font-size: 13px; }
-  .addr-status.ok { color: var(--ok); }
-  .addr-status.warn { color: #8a5300; }
-  .addr-link {
-    background: none; border: none; color: var(--accent); font-size: 12px; padding: 0;
-    cursor: pointer; text-decoration: underline; margin-left: 6px;
-  }
-  .addr-search-box {
-    margin-top: 6px; border: 1px solid var(--border); border-radius: 6px; padding: 6px;
+  /* Adressfeld ist immer "offen" (kein Toggle mehr) - Icon zeigt den Bestaetigungsstatus
+     (rotes X = noch keine Adresse gewaehlt, gruener Haken = bestaetigt), das Eingabefeld dient
+     gleichzeitig als Suchfeld und als Anzeige der aktuellen Auswahl. */
+  .addr-block {
+    font-size: 13px; border: 1px solid var(--border); border-radius: 6px; padding: 6px;
     background: #fafbfc;
   }
+  .addr-input-row { display: flex; align-items: center; gap: 6px; }
+  .addr-icon { flex: none; width: 16px; text-align: center; font-weight: 700; font-size: 14px; }
+  .addr-icon.no { color: var(--danger); }
+  .addr-icon.yes { color: var(--ok); }
   .addr-search-input {
-    width: 100%; font-size: 13px; padding: 5px 7px; border: 1px solid var(--border);
-    border-radius: 5px; font-family: inherit; margin-bottom: 4px;
+    flex: 1 1 auto; min-width: 0; font-size: 13px; padding: 5px 7px; border: 1px solid var(--border);
+    border-radius: 5px; font-family: inherit;
   }
+  .addr-search-results:not(:empty) { margin-top: 4px; }
   .addr-result {
     padding: 5px 7px; border-radius: 5px; cursor: pointer; font-size: 12.5px;
     display: flex; justify-content: space-between; gap: 8px;
@@ -343,8 +344,6 @@
       previewAspect: null,
       buchungskontenOptionen: [],
       confidence: null,
-      adressbuch: null,
-      addrSearchOpen: false,
       addrSearchQuery: "",
       addrSearchResults: [],
       fields: {
@@ -386,7 +385,6 @@
       r.status = "pruefen";
       r.buchungskontenOptionen = analyse.buchungskonten_optionen || [];
       r.confidence = analyse.confidence || "medium";
-      r.adressbuch = analyse.adressbuch || null;
       r.fields = {
         aussteller: analyse.aussteller || "",
         datum: analyse.datum || "",
@@ -404,6 +402,13 @@
         contactOverrideId: null,
         contactOverrideName: null,
       };
+      // Das Adressfeld ist immer offen (kein Toggle mehr, der die Suche anstoesst) - deshalb hier
+      // direkt mit dem erkannten Aussteller als Suchbegriff starten, wenn es sich um eine Rechnung
+      // handelt.
+      if (r.fields.belegtyp === "rechnung") {
+        r.addrSearchQuery = r.fields.aussteller || "";
+        performAddressSearch(r, r.addrSearchQuery);
+      }
     } catch (e) {
       r.status = "analyse_fehler";
       r.message = { type: "err", text: `Analyse fehlgeschlagen: ${e.message}` };
@@ -501,24 +506,13 @@
     return `<span class="beleg-status status-${status}">${map[status] || status}</span>`;
   }
 
-  // Adress-Status + manuelle Suche (nur bei Rechnungen relevant, siehe Kommentar in
-  // kasse-beleg-anlegen.ts): automatisch erkannte/neu anzulegende Adresse ist nur ein Vorschlag,
-  // ueber "Andere Adresse suchen" kann der Nutzer stattdessen z.B. ein Mitglied waehlen (etwa
-  // wenn eine Rechnung bereits privat verauslagt wurde und die Erstattung an das Mitglied statt
-  // an den Lieferanten gehen soll).
-  function addressStatusHtml(r) {
-    if (r.fields.contactOverrideId) {
-      return `<span class="addr-status ok">✓ ausgewählt: ${esc(r.fields.contactOverrideName)}</span>`;
-    }
-    if (r.adressbuch && r.adressbuch.gefunden) {
-      return `<span class="addr-status ok">✓ erkannt: ${esc(r.adressbuch.name)}</span>`;
-    }
-    if (r.adressbuch && !r.adressbuch.gefunden) {
-      return `<span class="addr-status warn">nicht gefunden - wird beim Anlegen neu als Lieferant angelegt</span>`;
-    }
-    return `<span class="addr-status warn">noch nicht geprüft</span>`;
-  }
-
+  // Adressfeld ("Zahlung an") - immer als offenes Suchfeld dargestellt, kein Toggle mehr:
+  // ueber die Trefferliste kann der Nutzer entweder die automatisch erkannte Adresse bestaetigen
+  // oder stattdessen z.B. ein Mitglied waehlen (etwa wenn eine Rechnung bereits privat verauslagt
+  // wurde und die Erstattung an das Mitglied statt an den Lieferanten gehen soll). Das rote "X"
+  // bzw. der gruene Haken vor dem Feld zeigt nur, ob bereits ein Treffer aktiv bestaetigt wurde
+  // (per Klick in der Trefferliste) - Tippen im Feld hebt eine Bestaetigung wieder auf (siehe
+  // input-Listener), das Leeren des Felds entspricht damit gedanklich einem Zuruecksetzen.
   function addressResultsHtml(results) {
     if (!results || results.length === 0) return `<div class="addr-hint">Keine Treffer.</div>`;
     return results
@@ -532,21 +526,18 @@
       .join("");
   }
 
-  function addressBlockHtml(r) {
-    const toggleLabel = r.addrSearchOpen ? "Suche schließen" : "Andere Adresse suchen";
-    const resetHtml = r.fields.contactOverrideId
-      ? `<button type="button" class="addr-link" data-action="addr-reset">Zurücksetzen</button>`
-      : "";
-    const searchBox = r.addrSearchOpen
-      ? `<div class="addr-search-box">
-          <input type="text" class="addr-search-input" placeholder="Name eingeben (Mitglied oder Firma) …" value="${esc(r.addrSearchQuery)}">
-          <div class="addr-search-results">${addressResultsHtml(r.addrSearchResults)}</div>
-        </div>`
-      : "";
+  function addressFieldHtml(r, disabled) {
+    const confirmed = !!r.fields.contactOverrideId;
+    const icon = confirmed
+      ? `<span class="addr-icon yes" title="Adresse bestätigt">✓</span>`
+      : `<span class="addr-icon no" title="Noch keine Adresse bestätigt">✕</span>`;
+    const value = confirmed ? r.fields.contactOverrideName : r.addrSearchQuery;
     return `<div class="addr-block">
-        <div>${addressStatusHtml(r)}${resetHtml}</div>
-        <button type="button" class="addr-link" data-action="addr-toggle">${toggleLabel}</button>
-        ${searchBox}
+        <div class="addr-input-row">
+          ${icon}
+          <input type="text" class="addr-search-input" placeholder="Name eingeben (Mitglied oder Firma) …" value="${esc(value)}" ${disabled ? "disabled" : ""}>
+        </div>
+        <div class="addr-search-results">${addressResultsHtml(r.addrSearchResults)}</div>
       </div>`;
   }
 
@@ -589,6 +580,7 @@
 
     const fields = `
       ${fieldRowHtml(r.id, "Aussteller", "aussteller", `<input type="text" data-id="${r.id}" data-field="aussteller" value="${esc(r.fields.aussteller)}" ${disabled ? "disabled" : ""}>`)}
+      ${r.fields.belegtyp === "rechnung" ? fieldRowHtml(r.id, "Zahlung an", "adresse", addressFieldHtml(r, disabled)) : ""}
       ${fieldRowHtml(r.id, "Datum", "datum", `<input type="date" data-id="${r.id}" data-field="datum" value="${esc(r.fields.datum)}" ${disabled ? "disabled" : ""}>`)}
       ${fieldRowHtml(r.id, "Betrag (€)", "betrag", `<input type="number" step="0.01" min="0.01" data-id="${r.id}" data-field="betrag" value="${esc(r.fields.betrag)}" ${disabled ? "disabled" : ""}>`)}
       ${fieldRowHtml(r.id, "Art", "art", `<select data-id="${r.id}" data-field="art" ${disabled ? "disabled" : ""}>
@@ -599,7 +591,6 @@
           <label class="belegtyp-check"><input type="checkbox" data-id="${r.id}" data-belegtyp="kassenbeleg" ${r.fields.belegtyp !== "rechnung" ? "checked" : ""} ${disabled ? "disabled" : ""}> Kassenbeleg</label>
           <label class="belegtyp-check"><input type="checkbox" data-id="${r.id}" data-belegtyp="rechnung" ${r.fields.belegtyp === "rechnung" ? "checked" : ""} ${disabled ? "disabled" : ""}> Rechnung</label>
         </div>`)}
-      ${r.fields.belegtyp === "rechnung" ? fieldRowHtml(r.id, "Adresse", "adresse", addressBlockHtml(r)) : ""}
       ${fieldRowHtml(r.id, "Belegnummer", "belegnummer", `<input type="text" data-id="${r.id}" data-field="belegnummer" value="${esc(r.fields.belegnummer)}" placeholder="wird sonst automatisch vergeben" ${disabled ? "disabled" : ""}>`)}
       ${fieldRowHtml(r.id, "Beschreibung", "kurzbeschreibung", `<input type="text" data-id="${r.id}" data-field="kurzbeschreibung" value="${esc(r.fields.kurzbeschreibung)}" ${disabled ? "disabled" : ""}>`)}
       ${fieldRowHtml(r.id, "Buchungskonto", "buchungskonto_nr", `<select data-id="${r.id}" data-field="buchungskonto_nr" ${disabled ? "disabled" : ""}>${optionsHtml}</select>`)}
@@ -685,30 +676,10 @@
       const r = receipts.find((x) => x.id === row.dataset.id);
       if (actionEl.dataset.action === "anlegen" && r) submitAnlegen(r);
       if (actionEl.dataset.action === "schliessen") removeReceipt(row.dataset.id);
-      if (actionEl.dataset.action === "addr-toggle" && r) {
-        r.addrSearchOpen = !r.addrSearchOpen;
-        if (r.addrSearchOpen && !r.addrSearchQuery) r.addrSearchQuery = r.fields.aussteller || "";
-        renderList();
-        if (r.addrSearchOpen) {
-          requestAnimationFrame(() => {
-            const input = list.querySelector(`.beleg-row[data-id="${r.id}"] .addr-search-input`);
-            if (input) {
-              input.focus();
-              input.setSelectionRange(input.value.length, input.value.length);
-            }
-          });
-          performAddressSearch(r, r.addrSearchQuery);
-        }
-      }
       if (actionEl.dataset.action === "addr-select" && r) {
         r.fields.contactOverrideId = actionEl.dataset.contactId;
         r.fields.contactOverrideName = actionEl.dataset.contactName;
-        r.addrSearchOpen = false;
-        renderList();
-      }
-      if (actionEl.dataset.action === "addr-reset" && r) {
-        r.fields.contactOverrideId = null;
-        r.fields.contactOverrideName = null;
+        r.addrSearchQuery = actionEl.dataset.contactName;
         renderList();
       }
       return;
@@ -727,6 +698,19 @@
     if (!r) return;
 
     if (el.classList.contains("addr-search-input")) {
+      // Tippen hebt eine zuvor per Klick bestaetigte Adresse wieder auf (das Leeren/Aendern
+      // des Namens entspricht gedanklich einem Zuruecksetzen) - dafuer wird nur das Icon gezielt
+      // aktualisiert, nicht renderList() aufgerufen, sonst verliert das Feld beim Tippen den Fokus.
+      if (r.fields.contactOverrideId) {
+        r.fields.contactOverrideId = null;
+        r.fields.contactOverrideName = null;
+        const icon = row.querySelector(".addr-icon");
+        if (icon) {
+          icon.className = "addr-icon no";
+          icon.textContent = "✕";
+          icon.title = "Noch keine Adresse bestätigt";
+        }
+      }
       // Debounced Live-Suche - aktualisiert bewusst nur den Ergebnis-Container (siehe
       // performAddressSearch), kein renderList() hier, sonst verliert das Feld beim Tippen
       // den Fokus.
@@ -754,6 +738,12 @@
       // der beiden Belegtypen aktiv (wie bei Radiobuttons), obwohl es technisch zwei
       // unabhaengige Checkboxen sind (auf Nutzerwunsch statt Dropdown, fuer schnellere Bedienung).
       r.fields.belegtyp = el.dataset.belegtyp;
+      // Adressfeld ist immer offen - beim erstmaligen Umschalten auf "Rechnung" direkt mit dem
+      // Aussteller als Suchbegriff starten.
+      if (r.fields.belegtyp === "rechnung" && !r.addrSearchQuery) {
+        r.addrSearchQuery = r.fields.aussteller || "";
+        performAddressSearch(r, r.addrSearchQuery);
+      }
     }
     renderList();
   });

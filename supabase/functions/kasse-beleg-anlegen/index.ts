@@ -227,7 +227,7 @@ async function findOrCreateContact(
     return { id: match.id, name: match.name || match.companyName || aussteller, gefunden: true };
   }
 
-  const createBody = {
+  const createBody: Record<string, unknown> = {
     _isCompany: true,
     name: aussteller,
     companyName: aussteller,
@@ -239,7 +239,15 @@ async function findOrCreateContact(
     iban: info.iban || "",
     bic: info.bic || "",
   };
-  const createRes = await evRequest("POST", `${EV_BASE_URL}/contact-details/`, apiKey, createBody);
+  let createRes = await evRequest("POST", `${EV_BASE_URL}/contact-details/`, apiKey, createBody);
+  if (!createRes.ok) {
+    // Haeufigster Grund: eine von Claude falsch gelesene oder ungueltige IBAN/BIC laesst die
+    // Validierung scheitern. Lieber den Kontakt ohne Bankdaten anlegen (Personal kann die IBAN
+    // spaeter in Easyverein nachtragen) als die ganze Adressverknuepfung aufzugeben.
+    delete createBody.iban;
+    delete createBody.bic;
+    createRes = await evRequest("POST", `${EV_BASE_URL}/contact-details/`, apiKey, createBody);
+  }
   if (!createRes.ok) return null;
   return { id: createRes.json.id, name: aussteller, gefunden: false };
 }
