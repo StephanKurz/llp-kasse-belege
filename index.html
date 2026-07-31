@@ -50,17 +50,21 @@
 
   #body { flex: 1 1 auto; display: flex; gap: 16px; padding: 16px 20px; overflow: hidden; }
 
-  #list-pane { flex: 1 1 auto; min-width: 0; overflow-y: auto; }
+  #list-pane { flex: 1 1 auto; min-width: 200px; overflow-y: auto; }
   #list { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 8px; align-content: start; }
   #list-empty { color: var(--muted); font-size: 13px; }
 
+  /* Breite wird gezielt in JS gesetzt (computePreviewWidth) - hier nur eine Sicherheitsgrenze
+     relativ zur verfuegbaren Breite, falls die Einbettung insgesamt schmal ist. Bewusst KEIN
+     max-height auf der Pane selbst: die Hoehe darf ueber den sichtbaren Bereich hinauswachsen
+     (lange Belege), overflow-y:auto laesst dann NUR die Vorschau scrollen, nicht die Liste. */
   #preview-pane {
-    flex: 0 0 auto; max-width: 55%; min-width: 220px; overflow: auto;
+    flex: 0 0 auto; max-width: 70%; min-width: 220px; overflow-y: auto; overflow-x: hidden;
     border: 1px solid var(--border); border-radius: 10px; background: #eceef1;
-    display: flex; align-items: center; justify-content: center; padding: 10px;
+    display: flex; align-items: flex-start; justify-content: center; padding: 10px;
   }
-  #preview-pane.empty { color: var(--muted); font-size: 13px; text-align: center; }
-  #preview-pane img, #preview-pane embed { max-width: 100%; width: auto; height: auto; display: block; border: none; }
+  #preview-pane.empty { align-items: center; color: var(--muted); font-size: 13px; text-align: center; }
+  #preview-pane img, #preview-pane embed { width: 100%; height: auto; display: block; border: none; }
 
   .beleg-row {
     background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px;
@@ -498,16 +502,30 @@
       .join("");
   }
 
+  // Bestimmt die Breite der Vorschau-Pane aus dem Seitenverhaeltnis des Belegs. Schmale/hohe
+  // Belege (Kassenbons) bekommen eine feste, gut lesbare Mindestbreite statt - wie zuvor - anhand
+  // einer Hoehenbegrenzung auf eine winzige Breite zusammengestaucht zu werden; breite/quere
+  // Dokumente duerfen entsprechend mehr Breite beanspruchen. Die Hoehe ergibt sich danach von
+  // selbst (aspect-ratio) und darf beliebig lang werden - die Pane scrollt dafuer eigenstaendig.
+  function computePreviewWidth(aspect) {
+    const MIN_W = 460;
+    const MAX_W = 820;
+    if (aspect <= 1) return MIN_W;
+    return Math.min(MAX_W, Math.round(MIN_W * aspect));
+  }
+
   function renderPreview() {
     const r = receipts.find((x) => x.id === openId);
     if (!r || !r.previewUrl) {
       previewPane.classList.add("empty");
+      previewPane.style.width = "";
       previewPane.innerHTML = `<div>Beleg auswählen, um die Vorschau zu sehen.</div>`;
       return;
     }
     previewPane.classList.remove("empty");
     const aspect = r.previewAspect || 0.71;
-    const style = `aspect-ratio:${aspect}; max-height:min(70vh,640px);`;
+    previewPane.style.width = computePreviewWidth(aspect) + "px";
+    const style = `aspect-ratio:${aspect};`;
     if (r.prepared && r.prepared.mimeType === "application/pdf") {
       previewPane.innerHTML = `<embed type="application/pdf" src="${r.previewUrl}" style="${style}">`;
     } else {
