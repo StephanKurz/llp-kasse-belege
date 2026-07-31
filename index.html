@@ -430,6 +430,17 @@
     renderPreview();
   }
 
+  // Entfernt einen fertig angelegten Beleg aus der Liste (nur aus der App, nicht aus
+  // Easyverein - der Beleg ist dort ja bereits erfolgreich angelegt und bleibt bestehen).
+  function removeReceipt(id) {
+    const r = receipts.find((x) => x.id === id);
+    if (r && r.previewUrl) URL.revokeObjectURL(r.previewUrl);
+    receipts = receipts.filter((x) => x.id !== id);
+    if (openId === id) openId = null;
+    renderList();
+    renderPreview();
+  }
+
   function statusPillHtml(status) {
     const map = {
       analysiere: "Analysiere …",
@@ -481,6 +492,8 @@
       actions = `<div class="row-actions"><button class="btn" disabled>Lege an …</button></div>`;
     } else if (r.status === "anlegen_fehler") {
       actions = `<div class="row-actions"><button class="btn" data-action="anlegen">Erneut versuchen</button></div>`;
+    } else if (r.status === "angelegt") {
+      actions = `<div class="row-actions"><button class="btn-secondary" data-action="schliessen">Schließen</button></div>`;
     }
 
     let message = "";
@@ -549,7 +562,8 @@
     if (actionEl) {
       const row = actionEl.closest(".beleg-row");
       const r = receipts.find((x) => x.id === row.dataset.id);
-      if (r && actionEl.dataset.action === "anlegen") submitAnlegen(r);
+      if (actionEl.dataset.action === "anlegen" && r) submitAnlegen(r);
+      if (actionEl.dataset.action === "schliessen") removeReceipt(row.dataset.id);
       return;
     }
     const header = e.target.closest(".row-header");
