@@ -57,7 +57,10 @@
   /* Immer exakt 2 Spalten, auch wenn eine Kachel aufgeklappt ist - keine Spaltenzahl-Aenderung
      mehr beim Oeffnen (die aufgeklappte Kachel bleibt in ihrer normalen Rasterzelle, wird nur
      hoeher, nicht breiter). */
-  #list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; align-content: start; }
+  /* align-items:start verhindert, dass eine kollabierte Kachel per Grid-Default (stretch) auf
+     die Hoehe ihrer geoeffneten Nachbarkachel in derselben Zeile aufgeblaeht wird (leerer
+     Weissraum darunter) - jede Kachel bleibt auf ihrer eigenen Inhaltshoehe. */
+  #list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; align-content: start; align-items: start; }
   #list-empty { color: var(--muted); font-size: 13px; }
 
   /* Bewusst KEIN max-height auf der Pane selbst: die Hoehe darf ueber den sichtbaren Bereich
