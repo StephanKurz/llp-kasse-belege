@@ -23,6 +23,11 @@ const CORS_HEADERS = {
 
 const KASSE_BANK_ACCOUNT_ID = 214741342;
 
+// Kontaktgruppe "Lieferanten" (Kuerzel LIEF) im gemeinsamen Adressbuch (/contact-details/),
+// Stand 2026-08-01 per Live-Abfrage gegen /contact-details-group/ ermittelt. Wird beim Neuanlegen
+// eines Rechnungsstellers gesetzt, der noch nicht im Adressbuch existiert.
+const LIEFERANTEN_GROUP_ID = 139361291;
+
 const BUCHUNGSKONTEN: Record<number, { id: number; name: string }> = {
   2668: { id: 62809, name: "Betrieb Geschäftsstelle" },
   2702: { id: 37048, name: "Porto" },
@@ -197,6 +202,48 @@ async function evUploadAttachment(
   throw new Error("Easyverein: zu viele 429-Antworten beim Datei-Upload, abgebrochen.");
 }
 
+// Sucht den Rechnungssteller im gemeinsamen Adressbuch (nur relevant fuer belegtyp="rechnung" -
+// eine Rechnung braucht eine echte Adressbuch-Verknuepfung (relatedAddress) statt nur den freien
+// receiver-Text, sonst landet sie nicht korrekt als offener Posten und ist nicht mit der dort
+// hinterlegten IBAN verbunden). Wird niemand gefunden, legt die Funktion den Aussteller neu als
+// Firma in der Kontaktgruppe "Lieferanten" an (inkl. Anschrift/IBAN, falls Claude sie aus der
+// Rechnung extrahieren konnte). Gibt null zurueck, wenn weder Suche noch Anlegen funktionieren -
+// der Aufrufer faellt dann auf den reinen receiver-Text zurueck, statt den ganzen Ablauf
+// abzubrechen (die Adressverknuepfung ist eine Verbesserung, keine harte Voraussetzung).
+async function findOrCreateContact(
+  aussteller: string,
+  info: { strasse?: string | null; plz?: string | null; ort?: string | null; iban?: string | null; bic?: string | null },
+  apiKey: string,
+): Promise<{ id: number; name: string; gefunden: boolean } | null> {
+  if (!aussteller || !aussteller.trim()) return null;
+
+  const searchRes = await evRequest(
+    "GET",
+    `${EV_BASE_URL}/contact-details/?search=${encodeURIComponent(aussteller)}&limit=5`,
+    apiKey,
+  );
+  if (searchRes.ok && Array.isArray(searchRes.json?.results) && searchRes.json.results.length > 0) {
+    const match = searchRes.json.results[0];
+    return { id: match.id, name: match.name || match.companyName || aussteller, gefunden: true };
+  }
+
+  const createBody = {
+    _isCompany: true,
+    name: aussteller,
+    companyName: aussteller,
+    contactDetailsGroups: [LIEFERANTEN_GROUP_ID],
+    companyStreet: info.strasse || "",
+    companyZip: info.plz || "",
+    companyCity: info.ort || "",
+    companyCountry: info.strasse || info.plz || info.ort ? "Deutschland" : "",
+    iban: info.iban || "",
+    bic: info.bic || "",
+  };
+  const createRes = await evRequest("POST", `${EV_BASE_URL}/contact-details/`, apiKey, createBody);
+  if (!createRes.ok) return null;
+  return { id: createRes.json.id, name: aussteller, gefunden: false };
+}
+
 async function logResult(
   supabaseUrl: string,
   serviceRoleKey: string,
@@ -247,6 +294,13 @@ Deno.serve(async (req: Request) => {
     kurzbeschreibung,
     buchungskonto_nr,
     belegtyp,
+    iban,
+    bic,
+    strasse,
+    plz,
+    ort,
+    contact_override_id,
+    contact_override_name,
   } = body ?? {};
 
   if (!mimeType || !fileBase64) {
@@ -289,6 +343,19 @@ Deno.serve(async (req: Request) => {
     ? String(belegnummer).trim()
     : `KASSE-${datum}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
 
+  // Adressbuch-Verknuepfung NUR bei Rechnungen (siehe findOrCreateContact-Kommentar) - ein
+  // Kassenbeleg ist sofort bar bezahlt und braucht keine offene-Posten-Verknuepfung. Eine manuell
+  // im Widget ausgewaehlte Adresse (z.B. ein Mitglied, das die Rechnung bereits privat verauslagt
+  // hat) hat Vorrang vor der automatischen Aussteller-Suche.
+  let contact: { id: number; name: string; gefunden: boolean } | null = null;
+  if (belegtypNorm === "rechnung") {
+    if (contact_override_id) {
+      contact = { id: Number(contact_override_id), name: contact_override_name || aussteller || "", gefunden: true };
+    } else {
+      contact = await findOrCreateContact(aussteller ?? "", { strasse, plz, ort, iban, bic }, evApiKey);
+    }
+  }
+
   const logBase = {
     dateiname: dateiname ?? null,
     betrag,
@@ -300,10 +367,15 @@ Deno.serve(async (req: Request) => {
     buchungskonto_name: konto ? konto.name : null,
     belegnummer: invNumber,
     beschreibung: kurzbeschreibung ?? "",
+    contact_id: contact ? contact.id : null,
+    contact_gefunden: contact ? contact.gefunden : null,
   };
 
-  // 1) Invoice (Beleg) im Entwurfsstatus anlegen
-  const createInvoiceBody = {
+  // 1) Invoice (Beleg) im Entwurfsstatus anlegen - relatedAddress (falls ein Kontakt gefunden
+  // oder neu angelegt wurde) verknuepft die Rechnung mit dem Adressbuch-Eintrag samt der dort
+  // hinterlegten IBAN; receiver bleibt zusaetzlich als Anzeigetext gesetzt (auch als Fallback,
+  // falls die Adressbuch-Verknuepfung mal nicht moeglich war).
+  const createInvoiceBody: Record<string, unknown> = {
     isDraft: true,
     isReceipt: true,
     kind: artNorm,
@@ -316,6 +388,9 @@ Deno.serve(async (req: Request) => {
     invNumber,
     description: kurzbeschreibung ?? "",
   };
+  if (contact) {
+    createInvoiceBody.relatedAddress = contact.id;
+  }
 
   const invoiceRes = await evRequest("POST", `${EV_BASE_URL}/invoice/`, evApiKey, createInvoiceBody);
   if (!invoiceRes.ok) {
@@ -410,7 +485,12 @@ Deno.serve(async (req: Request) => {
       easyverein_invoice_id: invoiceId,
     });
     return jsonResponse(
-      { ok: true, easyverein_invoice_id: invoiceId, belegtyp: "rechnung" },
+      {
+        ok: true,
+        easyverein_invoice_id: invoiceId,
+        belegtyp: "rechnung",
+        adressbuch: contact ? { name: contact.name, gefunden: contact.gefunden } : null,
+      },
       200,
     );
   }

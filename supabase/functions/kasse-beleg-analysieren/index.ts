@@ -3,8 +3,14 @@
 // (falls auf dem Beleg sichtbar), eine Kurzbeschreibung sowie einen Vorschlag fuer das
 // Buchungskonto (Gegenkonto) aus der festen Liste unten - diese Liste wurde am 2026-07-30 aus der
 // tatsaechlichen Buchungshistorie des Bankkontos "Kasse" abgeleitet (siehe kasse-beleg-anlegen.ts,
-// dort ist dieselbe Liste zur Validierung nochmal hinterlegt). Reine Analyse, legt selbst noch
-// nichts in Easyverein an - das uebernimmt kasse-beleg-anlegen nach Bestaetigung im Widget.
+// dort ist dieselbe Liste zur Validierung nochmal hinterlegt). Zusaetzlich (fuer Rechnungen
+// relevant): sucht im gemeinsamen Easyverein-Adressbuch (/contact-details/) nach dem Aussteller,
+// damit das Widget schon vor dem Anlegen anzeigen kann, ob die Adresse erkannt wurde (siehe
+// kasse-beleg-anlegen.ts fuer das eigentliche Verknuepfen/Anlegen beim Absenden). Reine Analyse,
+// legt selbst noch nichts in Easyverein an - das uebernimmt kasse-beleg-anlegen nach Bestaetigung
+// im Widget.
+
+const EV_BASE_URL = "https://easyverein.com/api/v2.0";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -43,6 +49,9 @@ Deno.serve(async (req: Request) => {
   if (!apiKey) {
     return jsonResponse({ error: "ANTHROPIC_API_KEY ist als Function-Secret nicht konfiguriert." }, 500);
   }
+  // Nicht hart erforderlich - ohne diesen Key wird die Adressbuch-Suche einfach uebersprungen
+  // (adressbuch bleibt null), der Rest der Analyse funktioniert trotzdem.
+  const evApiKey = Deno.env.get("EV_API_KEY_BOOKING");
 
   try {
     const body = await req.json();
@@ -87,7 +96,12 @@ Deno.serve(async (req: Request) => {
       `typische Signale: IBAN/Bankverbindung des Ausstellers, Fälligkeits-/Zahlungsziel-Datum ` +
       `("bitte begleichen Sie ... bis zum ..."), Rechnungsnummer, Kundennummer, KEIN TSE/Kassierer/` +
       `Rückgeld. Im Zweifel "kassenbeleg" verwenden.\n` +
-      `  "confidence": "high" | "medium" | "low" // wie sicher du dir bei Betrag und Datum bist\n` +
+      `  "confidence": "high" | "medium" | "low", // wie sicher du dir bei Betrag und Datum bist\n` +
+      `  "iban": string | null,       // IBAN des Ausstellers, falls auf dem Beleg sichtbar (nur bei Rechnungen üblich)\n` +
+      `  "bic": string | null,        // BIC des Ausstellers, falls sichtbar\n` +
+      `  "strasse": string | null,    // Straße + Hausnummer des Ausstellers, falls sichtbar\n` +
+      `  "plz": string | null,        // Postleitzahl des Ausstellers, falls sichtbar\n` +
+      `  "ort": string | null         // Ort des Ausstellers, falls sichtbar\n` +
       `}`;
 
     const resp = await fetch("https://api.anthropic.com/v1/messages", {
@@ -129,10 +143,34 @@ Deno.serve(async (req: Request) => {
     }
 
     const konto = BUCHUNGSKONTEN.find((k) => k.nr === Number(parsed.buchungskonto_nr)) ?? BUCHUNGSKONTEN[0];
+    const aussteller = String(parsed.aussteller ?? "");
+
+    // Adressbuch-Suche (nur Vorschau fuer die Anzeige im Widget - das eigentliche Verknuepfen
+    // bzw. Neuanlegen passiert erst beim Absenden in kasse-beleg-anlegen). Schlaegt die Suche
+    // fehl oder ist kein EV-Key konfiguriert, bleibt adressbuch einfach null statt die ganze
+    // Analyse abzubrechen.
+    let adressbuch: { gefunden: boolean; id: number; name: string } | null = null;
+    if (evApiKey && aussteller.trim()) {
+      try {
+        const searchResp = await fetch(
+          `${EV_BASE_URL}/contact-details/?search=${encodeURIComponent(aussteller)}&limit=1`,
+          { headers: { Authorization: `Bearer ${evApiKey}` } },
+        );
+        if (searchResp.ok) {
+          const searchData = await searchResp.json();
+          const match = (searchData.results ?? [])[0];
+          if (match) {
+            adressbuch = { gefunden: true, id: match.id, name: match.name || match.companyName || aussteller };
+          }
+        }
+      } catch {
+        // Adressbuch-Suche ist ein Komfort-Feature - Fehler hier duerfen die Analyse nicht kippen.
+      }
+    }
 
     return jsonResponse(
       {
-        aussteller: parsed.aussteller ?? "",
+        aussteller,
         datum: parsed.datum ?? null,
         betrag: typeof parsed.betrag === "number" ? parsed.betrag : Number(parsed.betrag) || null,
         art: parsed.art === "revenue" ? "revenue" : "expense",
@@ -142,6 +180,12 @@ Deno.serve(async (req: Request) => {
         belegtyp: parsed.belegtyp === "rechnung" ? "rechnung" : "kassenbeleg",
         confidence: parsed.confidence ?? "medium",
         buchungskonten_optionen: BUCHUNGSKONTEN,
+        iban: parsed.iban ?? null,
+        bic: parsed.bic ?? null,
+        strasse: parsed.strasse ?? null,
+        plz: parsed.plz ?? null,
+        ort: parsed.ort ?? null,
+        adressbuch,
       },
       200,
     );

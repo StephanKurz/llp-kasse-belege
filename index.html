@@ -108,6 +108,29 @@
   .belegtyp-check { display: inline-flex; align-items: center; gap: 5px; font-size: 13.5px; cursor: pointer; }
   .belegtyp-check input { width: auto; flex: none; cursor: pointer; }
 
+  .addr-block { font-size: 13px; }
+  .addr-status.ok { color: var(--ok); }
+  .addr-status.warn { color: #8a5300; }
+  .addr-link {
+    background: none; border: none; color: var(--accent); font-size: 12px; padding: 0;
+    cursor: pointer; text-decoration: underline; margin-left: 6px;
+  }
+  .addr-search-box {
+    margin-top: 6px; border: 1px solid var(--border); border-radius: 6px; padding: 6px;
+    background: #fafbfc;
+  }
+  .addr-search-input {
+    width: 100%; font-size: 13px; padding: 5px 7px; border: 1px solid var(--border);
+    border-radius: 5px; font-family: inherit; margin-bottom: 4px;
+  }
+  .addr-result {
+    padding: 5px 7px; border-radius: 5px; cursor: pointer; font-size: 12.5px;
+    display: flex; justify-content: space-between; gap: 8px;
+  }
+  .addr-result:hover { background: var(--bg); }
+  .addr-result-tag { color: var(--muted); font-size: 11px; flex: none; }
+  .addr-hint { color: var(--muted); font-size: 12px; padding: 4px 2px; }
+
   .row-actions { margin-top: 10px; display: flex; align-items: center; gap: 10px; }
 
   .row-msg { font-size: 12.5px; margin-top: 8px; }
@@ -160,6 +183,7 @@
   const BASE_URL = "https://cclcdhwnzkzciwjaclzt.supabase.co/functions/v1";
   const ANALYSE_URL = `${BASE_URL}/kasse-beleg-analysieren`;
   const ANLEGEN_URL = `${BASE_URL}/kasse-beleg-anlegen`;
+  const ADRESSE_URL = `${BASE_URL}/kasse-adresse-suchen`;
 
   const fileInput = document.getElementById("file-input");
   const uploadBtn = document.getElementById("upload-btn");
@@ -319,7 +343,16 @@
       previewAspect: null,
       buchungskontenOptionen: [],
       confidence: null,
-      fields: { aussteller: "", datum: "", betrag: "", art: "expense", belegtyp: "kassenbeleg", belegnummer: "", kurzbeschreibung: "", buchungskonto_nr: null },
+      adressbuch: null,
+      addrSearchOpen: false,
+      addrSearchQuery: "",
+      addrSearchResults: [],
+      fields: {
+        aussteller: "", datum: "", betrag: "", art: "expense", belegtyp: "kassenbeleg",
+        belegnummer: "", kurzbeschreibung: "", buchungskonto_nr: null,
+        iban: null, bic: null, strasse: null, plz: null, ort: null,
+        contactOverrideId: null, contactOverrideName: null,
+      },
       message: null,
       result: null,
     };
@@ -353,6 +386,7 @@
       r.status = "pruefen";
       r.buchungskontenOptionen = analyse.buchungskonten_optionen || [];
       r.confidence = analyse.confidence || "medium";
+      r.adressbuch = analyse.adressbuch || null;
       r.fields = {
         aussteller: analyse.aussteller || "",
         datum: analyse.datum || "",
@@ -362,6 +396,13 @@
         belegnummer: analyse.belegnummer || "",
         kurzbeschreibung: analyse.kurzbeschreibung || "",
         buchungskonto_nr: analyse.buchungskonto ? analyse.buchungskonto.nr : (r.buchungskontenOptionen[0] ? r.buchungskontenOptionen[0].nr : null),
+        iban: analyse.iban || null,
+        bic: analyse.bic || null,
+        strasse: analyse.strasse || null,
+        plz: analyse.plz || null,
+        ort: analyse.ort || null,
+        contactOverrideId: null,
+        contactOverrideName: null,
       };
     } catch (e) {
       r.status = "analyse_fehler";
@@ -389,6 +430,13 @@
       belegnummer: r.fields.belegnummer,
       kurzbeschreibung: r.fields.kurzbeschreibung,
       buchungskonto_nr: parseInt(r.fields.buchungskonto_nr, 10),
+      iban: r.fields.iban || null,
+      bic: r.fields.bic || null,
+      strasse: r.fields.strasse || null,
+      plz: r.fields.plz || null,
+      ort: r.fields.ort || null,
+      contact_override_id: r.fields.contactOverrideId || null,
+      contact_override_name: r.fields.contactOverrideName || null,
     };
 
     try {
@@ -453,6 +501,78 @@
     return `<span class="beleg-status status-${status}">${map[status] || status}</span>`;
   }
 
+  // Adress-Status + manuelle Suche (nur bei Rechnungen relevant, siehe Kommentar in
+  // kasse-beleg-anlegen.ts): automatisch erkannte/neu anzulegende Adresse ist nur ein Vorschlag,
+  // ueber "Andere Adresse suchen" kann der Nutzer stattdessen z.B. ein Mitglied waehlen (etwa
+  // wenn eine Rechnung bereits privat verauslagt wurde und die Erstattung an das Mitglied statt
+  // an den Lieferanten gehen soll).
+  function addressStatusHtml(r) {
+    if (r.fields.contactOverrideId) {
+      return `<span class="addr-status ok">✓ ausgewählt: ${esc(r.fields.contactOverrideName)}</span>`;
+    }
+    if (r.adressbuch && r.adressbuch.gefunden) {
+      return `<span class="addr-status ok">✓ erkannt: ${esc(r.adressbuch.name)}</span>`;
+    }
+    if (r.adressbuch && !r.adressbuch.gefunden) {
+      return `<span class="addr-status warn">nicht gefunden - wird beim Anlegen neu als Lieferant angelegt</span>`;
+    }
+    return `<span class="addr-status warn">noch nicht geprüft</span>`;
+  }
+
+  function addressResultsHtml(results) {
+    if (!results || results.length === 0) return `<div class="addr-hint">Keine Treffer.</div>`;
+    return results
+      .map(
+        (c) => `
+      <div class="addr-result" data-action="addr-select" data-contact-id="${c.id}" data-contact-name="${esc(c.name)}">
+        <span>${esc(c.name)}${c.ort ? " · " + esc(c.ort) : ""}</span>
+        <span class="addr-result-tag">${c.istMitglied ? "Mitglied" : ""}</span>
+      </div>`,
+      )
+      .join("");
+  }
+
+  function addressBlockHtml(r) {
+    const toggleLabel = r.addrSearchOpen ? "Suche schließen" : "Andere Adresse suchen";
+    const resetHtml = r.fields.contactOverrideId
+      ? `<button type="button" class="addr-link" data-action="addr-reset">Zurücksetzen</button>`
+      : "";
+    const searchBox = r.addrSearchOpen
+      ? `<div class="addr-search-box">
+          <input type="text" class="addr-search-input" placeholder="Name eingeben (Mitglied oder Firma) …" value="${esc(r.addrSearchQuery)}">
+          <div class="addr-search-results">${addressResultsHtml(r.addrSearchResults)}</div>
+        </div>`
+      : "";
+    return `<div class="addr-block">
+        <div>${addressStatusHtml(r)}${resetHtml}</div>
+        <button type="button" class="addr-link" data-action="addr-toggle">${toggleLabel}</button>
+        ${searchBox}
+      </div>`;
+  }
+
+  async function performAddressSearch(r, query) {
+    if (!query || query.trim().length < 2) {
+      r.addrSearchResults = [];
+    } else {
+      try {
+        const resp = await fetch(ADRESSE_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query: query.trim() }),
+        });
+        const data = await resp.json();
+        r.addrSearchResults = resp.ok ? (data.results || []) : [];
+      } catch {
+        r.addrSearchResults = [];
+      }
+    }
+    // Nur den Ergebnis-Container aktualisieren, nicht renderList() - sonst verliert das
+    // Sucheingabefeld beim Tippen den Fokus.
+    const row = list.querySelector(`.beleg-row[data-id="${r.id}"]`);
+    const container = row && row.querySelector(".addr-search-results");
+    if (container) container.innerHTML = addressResultsHtml(r.addrSearchResults);
+  }
+
   function rowBodyHtml(r) {
     const disabled = r.status === "sende" || r.status === "angelegt";
     const confidenceNote = r.confidence === "low"
@@ -479,6 +599,7 @@
           <label class="belegtyp-check"><input type="checkbox" data-id="${r.id}" data-belegtyp="kassenbeleg" ${r.fields.belegtyp !== "rechnung" ? "checked" : ""} ${disabled ? "disabled" : ""}> Kassenbeleg</label>
           <label class="belegtyp-check"><input type="checkbox" data-id="${r.id}" data-belegtyp="rechnung" ${r.fields.belegtyp === "rechnung" ? "checked" : ""} ${disabled ? "disabled" : ""}> Rechnung</label>
         </div>`)}
+      ${r.fields.belegtyp === "rechnung" ? fieldRowHtml(r.id, "Adresse", "adresse", addressBlockHtml(r)) : ""}
       ${fieldRowHtml(r.id, "Belegnummer", "belegnummer", `<input type="text" data-id="${r.id}" data-field="belegnummer" value="${esc(r.fields.belegnummer)}" placeholder="wird sonst automatisch vergeben" ${disabled ? "disabled" : ""}>`)}
       ${fieldRowHtml(r.id, "Beschreibung", "kurzbeschreibung", `<input type="text" data-id="${r.id}" data-field="kurzbeschreibung" value="${esc(r.fields.kurzbeschreibung)}" ${disabled ? "disabled" : ""}>`)}
       ${fieldRowHtml(r.id, "Buchungskonto", "buchungskonto_nr", `<select data-id="${r.id}" data-field="buchungskonto_nr" ${disabled ? "disabled" : ""}>${optionsHtml}</select>`)}
@@ -564,6 +685,32 @@
       const r = receipts.find((x) => x.id === row.dataset.id);
       if (actionEl.dataset.action === "anlegen" && r) submitAnlegen(r);
       if (actionEl.dataset.action === "schliessen") removeReceipt(row.dataset.id);
+      if (actionEl.dataset.action === "addr-toggle" && r) {
+        r.addrSearchOpen = !r.addrSearchOpen;
+        if (r.addrSearchOpen && !r.addrSearchQuery) r.addrSearchQuery = r.fields.aussteller || "";
+        renderList();
+        if (r.addrSearchOpen) {
+          requestAnimationFrame(() => {
+            const input = list.querySelector(`.beleg-row[data-id="${r.id}"] .addr-search-input`);
+            if (input) {
+              input.focus();
+              input.setSelectionRange(input.value.length, input.value.length);
+            }
+          });
+          performAddressSearch(r, r.addrSearchQuery);
+        }
+      }
+      if (actionEl.dataset.action === "addr-select" && r) {
+        r.fields.contactOverrideId = actionEl.dataset.contactId;
+        r.fields.contactOverrideName = actionEl.dataset.contactName;
+        r.addrSearchOpen = false;
+        renderList();
+      }
+      if (actionEl.dataset.action === "addr-reset" && r) {
+        r.fields.contactOverrideId = null;
+        r.fields.contactOverrideName = null;
+        renderList();
+      }
       return;
     }
     const header = e.target.closest(".row-header");
@@ -575,10 +722,22 @@
 
   list.addEventListener("input", (e) => {
     const el = e.target;
-    if (!el.dataset.field) return;
     const row = el.closest(".beleg-row");
-    const r = receipts.find((x) => x.id === row.dataset.id);
-    if (r) r.fields[el.dataset.field] = el.value;
+    const r = row && receipts.find((x) => x.id === row.dataset.id);
+    if (!r) return;
+
+    if (el.classList.contains("addr-search-input")) {
+      // Debounced Live-Suche - aktualisiert bewusst nur den Ergebnis-Container (siehe
+      // performAddressSearch), kein renderList() hier, sonst verliert das Feld beim Tippen
+      // den Fokus.
+      r.addrSearchQuery = el.value;
+      clearTimeout(r._searchTimer);
+      r._searchTimer = setTimeout(() => performAddressSearch(r, el.value), 400);
+      return;
+    }
+
+    if (!el.dataset.field) return;
+    r.fields[el.dataset.field] = el.value;
   });
 
   // Eigener change-Listener fuer "Beleg-Typ": im Gegensatz zu den uebrigen Feldern (die nur
