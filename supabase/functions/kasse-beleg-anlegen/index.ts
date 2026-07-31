@@ -246,6 +246,7 @@ Deno.serve(async (req: Request) => {
     belegnummer,
     kurzbeschreibung,
     buchungskonto_nr,
+    belegtyp,
   } = body ?? {};
 
   if (!mimeType || !fileBase64) {
@@ -255,8 +256,12 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: "datum und ein positiver betrag sind erforderlich." }, 400);
   }
   const artNorm = art === "revenue" ? "revenue" : "expense";
+  // "rechnung" = Rechnung mit Zahlungsziel, noch nicht bezahlt -> nur Beleg, keine Buchung (kein
+  // Geld hat die Kasse verlassen). "kassenbeleg" (Default) = sofort bar bezahlt -> wie bisher
+  // Beleg + Buchung. Vom Nutzer im Widget vorbelegt durch die Analyse, aber frei aenderbar.
+  const belegtypNorm = belegtyp === "rechnung" ? "rechnung" : "kassenbeleg";
   const konto = BUCHUNGSKONTEN[Number(buchungskonto_nr)];
-  if (!konto) {
+  if (belegtypNorm === "kassenbeleg" && !konto) {
     return jsonResponse(
       { error: `Unbekannte Buchungskonto-Nummer: ${buchungskonto_nr}. Erlaubt sind: ${Object.keys(BUCHUNGSKONTEN).join(", ")}` },
       400,
@@ -290,8 +295,9 @@ Deno.serve(async (req: Request) => {
     datum,
     aussteller: aussteller ?? "",
     art: artNorm,
-    buchungskonto_nr: Number(buchungskonto_nr),
-    buchungskonto_name: konto.name,
+    belegtyp: belegtypNorm,
+    buchungskonto_nr: konto ? Number(buchungskonto_nr) : null,
+    buchungskonto_name: konto ? konto.name : null,
     belegnummer: invNumber,
     beschreibung: kurzbeschreibung ?? "",
   };
@@ -394,7 +400,21 @@ Deno.serve(async (req: Request) => {
     );
   }
 
-  // 4) Buchung auf Bankkonto "Kasse" anlegen, verknuepft mit dem Beleg
+  // 4) Buchung auf Bankkonto "Kasse" anlegen, verknuepft mit dem Beleg - NUR bei Kassenbelegen.
+  // Rechnungen mit Zahlungsziel sind noch nicht bezahlt, es hat also noch kein Geld die Kasse
+  // verlassen: hier endet der Ablauf bewusst mit dem reinen Beleg, ohne Buchung.
+  if (belegtypNorm === "rechnung") {
+    await logResult(SUPABASE_URL, SERVICE_ROLE_KEY, {
+      ...logBase,
+      status: "angelegt",
+      easyverein_invoice_id: invoiceId,
+    });
+    return jsonResponse(
+      { ok: true, easyverein_invoice_id: invoiceId, belegtyp: "rechnung" },
+      200,
+    );
+  }
+
   const amount = artNorm === "expense" ? -Math.abs(betrag) : Math.abs(betrag);
   const createBookingBody = {
     billingAccount: konto.id,
@@ -440,6 +460,7 @@ Deno.serve(async (req: Request) => {
       easyverein_booking_id: bookingId,
       buchungskonto: konto.name,
       betrag: amount,
+      belegtyp: "kassenbeleg",
     },
     200,
   );

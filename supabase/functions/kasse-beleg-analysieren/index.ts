@@ -81,6 +81,12 @@ Deno.serve(async (req: Request) => {
       `  "buchungskonto_nr": number,  // die Kontonummer aus folgender Liste, die inhaltlich am besten passt:\n` +
       `${kontenListe}\n` +
       `  // Falls nichts eindeutig passt, verwende 2668 ("Betrieb Geschäftsstelle") als Standard.\n` +
+      `  "belegtyp": "kassenbeleg" | "rechnung", // "kassenbeleg": Kassenbon/Quittung mit sofortiger ` +
+      `Barzahlung - typische Signale: Kassierer, TSE-/Kassen-Seriennummer, TSE-Signatur, Rückgeld/` +
+      `Bargeld erhalten, Bon-Nummer. "rechnung": Rechnung mit Zahlungsziel, noch nicht bezahlt - ` +
+      `typische Signale: IBAN/Bankverbindung des Ausstellers, Fälligkeits-/Zahlungsziel-Datum ` +
+      `("bitte begleichen Sie ... bis zum ..."), Rechnungsnummer, Kundennummer, KEIN TSE/Kassierer/` +
+      `Rückgeld. Im Zweifel "kassenbeleg" verwenden.\n` +
       `  "confidence": "high" | "medium" | "low" // wie sicher du dir bei Betrag und Datum bist\n` +
       `}`;
 
@@ -133,6 +139,7 @@ Deno.serve(async (req: Request) => {
         belegnummer: parsed.belegnummer ?? null,
         kurzbeschreibung: parsed.kurzbeschreibung ?? "",
         buchungskonto: konto,
+        belegtyp: parsed.belegtyp === "rechnung" ? "rechnung" : "kassenbeleg",
         confidence: parsed.confidence ?? "medium",
         buchungskonten_optionen: BUCHUNGSKONTEN,
       },
