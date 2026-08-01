@@ -202,14 +202,32 @@ async function evUploadAttachment(
   throw new Error("Easyverein: zu viele 429-Antworten beim Datei-Upload, abgebrochen.");
 }
 
+// Deutscher Anzeigename je ISO-Laendercode fuer das Freitextfeld "companyCountry" - deckt die
+// Nachbarlaender ab, die bei einem in Reutlingen ansaessigen Verein realistischerweise als
+// Rechnungssteller vorkommen koennen (z.B. IBAN aus Oesterreich/der Schweiz). Alles andere faellt
+// auf "DE" zurueck (siehe countryCodeFromIban).
+const COUNTRY_NAMES: Record<string, string> = {
+  DE: "Deutschland", AT: "Österreich", CH: "Schweiz", FR: "Frankreich",
+  NL: "Niederlande", IT: "Italien", ES: "Spanien", LU: "Luxemburg", BE: "Belgien",
+};
+
+// Die ersten zwei Zeichen einer IBAN sind immer der ISO-3166-Laendercode (z.B. "DE89..." ->
+// "DE") - eine einfache, zuverlaessige Quelle, um den Laendercode zu bestimmen, ohne dass Claude
+// ihn separat erkennen muesste. Liefert null, wenn keine plausible IBAN vorliegt.
+function countryCodeFromIban(iban?: string | null): string | null {
+  const cleaned = (iban || "").replace(/\s+/g, "").toUpperCase();
+  const match = cleaned.match(/^([A-Z]{2})\d{2}/);
+  return match ? match[1] : null;
+}
+
 // Sucht den Rechnungssteller im gemeinsamen Adressbuch (nur relevant fuer belegtyp="rechnung" -
 // eine Rechnung braucht eine echte Adressbuch-Verknuepfung (relatedAddress) statt nur den freien
 // receiver-Text, sonst landet sie nicht korrekt als offener Posten und ist nicht mit der dort
 // hinterlegten IBAN verbunden). Wird niemand gefunden, legt die Funktion den Aussteller neu als
-// Firma in der Kontaktgruppe "Lieferanten" an (inkl. Anschrift/IBAN, falls Claude sie aus der
-// Rechnung extrahieren konnte). Gibt null zurueck, wenn weder Suche noch Anlegen funktionieren -
-// der Aufrufer faellt dann auf den reinen receiver-Text zurueck, statt den ganzen Ablauf
-// abzubrechen (die Adressverknuepfung ist eine Verbesserung, keine harte Voraussetzung).
+// Firma in der Kontaktgruppe "Lieferanten" an (inkl. Anschrift/IBAN/Laendercode, falls Claude sie
+// aus der Rechnung extrahieren konnte). Gibt null zurueck, wenn weder Suche noch Anlegen
+// funktionieren - der Aufrufer faellt dann auf den reinen receiver-Text zurueck, statt den ganzen
+// Ablauf abzubrechen (die Adressverknuepfung ist eine Verbesserung, keine harte Voraussetzung).
 async function findOrCreateContact(
   aussteller: string,
   info: { strasse?: string | null; plz?: string | null; ort?: string | null; iban?: string | null; bic?: string | null },
@@ -227,6 +245,10 @@ async function findOrCreateContact(
     return { id: match.id, name: match.name || match.companyName || aussteller, gefunden: true };
   }
 
+  // Laendercode selbst bestimmen (aus der IBAN, falls vorhanden), im Zweifel "DE" - ohne dieses
+  // Feld (company_country_code) bleibt der Kontakt in Easyverein sonst auf dem Enum-Wert "other"
+  // stehen, unabhaengig vom Freitext companyCountry.
+  const countryCode = countryCodeFromIban(info.iban) || "DE";
   const createBody: Record<string, unknown> = {
     _isCompany: true,
     name: aussteller,
@@ -235,7 +257,8 @@ async function findOrCreateContact(
     companyStreet: info.strasse || "",
     companyZip: info.plz || "",
     companyCity: info.ort || "",
-    companyCountry: info.strasse || info.plz || info.ort ? "Deutschland" : "",
+    companyCountry: COUNTRY_NAMES[countryCode] || COUNTRY_NAMES.DE,
+    company_country_code: countryCode,
     iban: info.iban || "",
     bic: info.bic || "",
   };

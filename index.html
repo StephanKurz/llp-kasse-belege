@@ -162,7 +162,6 @@
   <div id="toolbar">
     <h1>Kassenbelege erfassen</h1>
     <div id="toolbar-actions">
-      <button id="anlegen-alle-btn" class="btn-secondary" disabled>Alles anlegen</button>
       <button id="upload-btn" class="btn"
         title="Beleg (Foto oder PDF) hochladen - die Felder werden automatisch ausgelesen. Bitte vor dem Anlegen prüfen und ggf. korrigieren. JPG, PNG oder PDF, auch mehrere gleichzeitig.">
         Beleg hochladen
@@ -191,7 +190,6 @@
 
   const fileInput = document.getElementById("file-input");
   const uploadBtn = document.getElementById("upload-btn");
-  const anlegenAlleBtn = document.getElementById("anlegen-alle-btn");
   const list = document.getElementById("list");
   const previewPane = document.getElementById("preview-pane");
 
@@ -205,8 +203,6 @@
     handleFiles(e.target.files);
     fileInput.value = "";
   });
-  anlegenAlleBtn.addEventListener("click", anlegenAlle);
-
   let dragCounter = 0;
   document.addEventListener("dragover", (e) => e.preventDefault());
   document.addEventListener("dragenter", (e) => {
@@ -465,25 +461,6 @@
     renderList();
   }
 
-  async function anlegenAlle() {
-    // Rechnungen ohne bestaetigte Zahlungsadresse werden uebersprungen (dieselbe Sperre wie beim
-    // einzelnen "Beleg anlegen"-Schalter, siehe rowBodyHtml) - sonst wuerde "Alles anlegen" die
-    // Sicherheitsabfrage umgehen.
-    const ready = receipts.filter((r) => r.status === "pruefen" && !(r.fields.belegtyp === "rechnung" && !isAddressConfirmed(r)));
-    if (ready.length === 0) return;
-    anlegenAlleBtn.disabled = true;
-    for (let i = 0; i < ready.length; i++) {
-      anlegenAlleBtn.textContent = `Lege an (${i + 1}/${ready.length}) …`;
-      await submitAnlegen(ready[i]);
-    }
-    anlegenAlleBtn.textContent = "Alles anlegen";
-    updateAnlegenAlleButton();
-  }
-
-  function updateAnlegenAlleButton() {
-    anlegenAlleBtn.disabled = receipts.length === 0;
-  }
-
   function toggleOpen(id) {
     openId = openId === id ? null : id;
     renderList();
@@ -651,7 +628,6 @@
   }
 
   function renderList() {
-    updateAnlegenAlleButton();
     if (receipts.length === 0) {
       list.innerHTML = `<div id="list-empty">Noch keine Belege hochgeladen.</div>`;
       return;
