@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kassenbelege</title>
-<script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.2/dist/html2pdf.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.4/dist/jspdf.plugin.autotable.min.js"></script>
 <style>
   :root {
     --accent: #bd0010;
@@ -241,12 +242,8 @@
      oder Bearbeiten-Icons. */
   /* Vereinsdesign fuer den Ausdruck (Logo, Rot #bd0010, Fusszeile) - siehe llp-brief-layout-Skill.
      Hochformat unabhaengig von der Browser-Voreinstellung. */
-  @page { size: portrait; margin: 15mm; }
-
-  /* Diese Regeln gelten sowohl fuer den echten Browser-Druck (@media print, z.B. Strg+P als
-     Fallback) als auch fuer die PDF-Erzeugung per html2pdf.js, die den DOM waehrend der Erzeugung
-     rasterisiert und daher die CSS-Medienabfrage "print" nicht automatisch anwendet - dafuer wird
-     stattdessen kurzzeitig die Klasse "kb-printing" auf <body> gesetzt (siehe kbPrintBtn-Handler). */
+  /* Fallback fuer manuellen Browser-Druck (Strg+P) - der Drucken-Button selbst erzeugt die PDF
+     programmatisch per jsPDF/autoTable (siehe kbPrintBtn-Handler), nicht ueber diesen Weg. */
   @page { size: portrait; margin: 15mm; }
 
   @media print {
@@ -272,30 +269,6 @@
       border-top: 1px solid var(--border); padding-top: 6px; margin-top: 16px;
       text-align: center; font-size: 8px; color: #555555; line-height: 1.5;
     }
-  }
-
-  body.kb-printing #toolbar, body.kb-printing #body, body.kb-printing #kb-toolbar,
-  body.kb-printing #kb-error, body.kb-printing #kb-anfangsbestand-form,
-  body.kb-printing .kb-edit-btn, body.kb-printing .kb-endbestand-undo-btn {
-    display: none !important;
-  }
-  html.kb-printing, body.kb-printing { height: auto !important; overflow: visible !important; font-family: Arial, Helvetica, sans-serif; }
-  body.kb-printing #app, body.kb-printing #kb-section, body.kb-printing #kb-table-wrap {
-    height: auto !important; max-height: none !important; overflow: visible !important; flex: none !important;
-  }
-  body.kb-printing #kb-table-wrap { border: none !important; }
-  body.kb-printing .kb-print-only { display: block !important; }
-  body.kb-printing #kb-print-header {
-    display: flex !important; align-items: flex-start; justify-content: space-between;
-    border-bottom: 2px solid var(--accent); padding-bottom: 8px; margin-bottom: 14px;
-  }
-  body.kb-printing #kb-print-title { font-size: 18px; margin: 0; color: var(--accent); }
-  body.kb-printing #kb-print-meta { font-size: 11px; color: var(--muted); margin-top: 4px; }
-  body.kb-printing #kb-print-logo { height: 20mm; width: auto; }
-  body.kb-printing #kb-print-footer {
-    display: block !important;
-    border-top: 1px solid var(--border); padding-top: 6px; margin-top: 16px;
-    text-align: center; font-size: 8px; color: #555555; line-height: 1.5;
   }
 </style>
 </head>
@@ -412,46 +385,113 @@
   const kbPrintBtn = document.getElementById("kb-print-btn");
   const kbPrintMeta = document.getElementById("kb-print-meta");
   kbPrintBtn.innerHTML = PRINTER_SVG;
-  // Erzeugt eine echte PDF-Datei im Vereinsdesign statt den Systemdruckdialog zu oeffnen.
-  // html2pdf.js rasterisiert den DOM und wendet dabei KEINE @media print-Regeln an - deshalb wird
-  // kurzzeitig die Klasse "kb-printing" gesetzt, die dieselbe Optik erzwingt (siehe CSS oben).
-  kbPrintBtn.addEventListener("click", async () => {
+  // Erzeugt eine echte PDF-Datei im Vereinsdesign per jsPDF/autoTable (nicht ueber den
+  // Systemdruckdialog) - Tabellenkopf, Logo, roter Strich, Druckdatum und Fusszeile mit
+  // Seitenzahl werden dabei ueber didDrawPage auf JEDER Seite neu gezeichnet.
+  kbPrintBtn.addEventListener("click", () => {
+    if (!currentKbData) return;
+    const data = currentKbData;
     const now = new Date();
-    const datum = now.toLocaleDateString("de-DE");
-    const uhrzeit = now.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
-    kbPrintMeta.textContent = `Gedruckt am ${datum} um ${uhrzeit} Uhr`;
+    const druckDatum = now.toLocaleDateString("de-DE");
+    const druckUhrzeit = now.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+    const logoSrc = document.getElementById("kb-print-logo").src;
 
     kbPrintBtn.disabled = true;
-    document.documentElement.classList.add("kb-printing");
-    document.body.classList.add("kb-printing");
-    await new Promise((r) => setTimeout(r, 50));
-
     try {
-      const section = document.getElementById("kb-section");
-      await html2pdf()
-        .set({
-          margin: 10,
-          filename: `Kassenblatt_${currentKbJahr}.pdf`,
-          image: { type: "jpeg", quality: 0.98 },
-          html2canvas: {
-            scale: 2,
-            useCORS: true,
-            scrollY: 0,
-            windowWidth: document.documentElement.scrollWidth,
-            windowHeight: section.scrollHeight,
-          },
-          jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
-          pagebreak: { mode: ["css", "legacy"], avoid: "tr" },
-        })
-        .from(section)
-        .save();
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const marginX = 12;
+      const headerHeight = 38;
+      const footerHeight = 14;
+
+      const body = [];
+      body.push([
+        "", "", "",
+        euro(data.anfangsbestand) + " €",
+        fmtDateDE(`${data.jahr}-01-01`),
+        `Anfangsbestand ${data.jahr}`,
+      ]);
+      data.rows.forEach((row, i) => {
+        body.push([
+          i + 1,
+          row.einnahme != null ? euro(row.einnahme) + " €" : "",
+          row.ausgabe != null ? euro(row.ausgabe) + " €" : "",
+          euro(row.bestand) + " €",
+          fmtDateDE(row.belegdatum),
+          row.text,
+        ]);
+      });
+      const jahrIstVorbei = new Date().getFullYear() > data.jahr;
+      if (data.abgeschlossen || jahrIstVorbei) {
+        const abschlussDatum = data.abgeschlossen_am ? fmtDateDE(String(data.abgeschlossen_am).slice(0, 10)) : "";
+        const endText = data.abgeschlossen
+          ? `Endbestand ${data.jahr} (bestätigt am ${abschlussDatum})`
+          : `Endbestand ${data.jahr}`;
+        const endWert = data.abgeschlossen ? data.endbestand : computeAktuellerEndbestand(data);
+        body.push(["", "", "", euro(endWert) + " €", fmtDateDE(`${data.jahr}-12-31`), endText]);
+      }
+
+      doc.autoTable({
+        head: [["", "Einnahmen", "Ausgaben", "Bestand", "Belegdatum", "Verwendung"]],
+        body,
+        startY: headerHeight,
+        margin: { top: headerHeight, bottom: footerHeight, left: marginX, right: marginX },
+        styles: { font: "helvetica", fontSize: 8, cellPadding: 1.5, valign: "middle", lineColor: [215, 220, 227], lineWidth: 0.1 },
+        headStyles: {
+          fillColor: [255, 255, 255], textColor: [107, 114, 128], fontStyle: "bold", fontSize: 7,
+          halign: "left", lineWidth: { bottom: 0.3 }, lineColor: [189, 0, 16],
+        },
+        columnStyles: {
+          0: { cellWidth: 7, halign: "right", textColor: [150, 150, 150] },
+          1: { cellWidth: 20, halign: "right" },
+          2: { cellWidth: 20, halign: "right" },
+          3: { cellWidth: 22, halign: "right" },
+          4: { cellWidth: 20, halign: "right" },
+          5: { cellWidth: "auto", halign: "left" },
+        },
+        didParseCell: (d) => {
+          if (d.section === "body" && d.row.raw[0] === "") d.cell.styles.fontStyle = "bold";
+        },
+        didDrawPage: () => {
+          doc.setDrawColor(189, 0, 16);
+          doc.setLineWidth(0.6);
+          doc.line(marginX, 34, pageWidth - marginX, 34);
+          doc.setTextColor(189, 0, 16);
+          doc.setFontSize(14);
+          doc.setFont("helvetica", "bold");
+          doc.text(`Kassenblatt ${data.jahr}`, marginX, 14);
+          doc.setTextColor(107, 114, 128);
+          doc.setFontSize(8);
+          doc.setFont("helvetica", "normal");
+          doc.text(`Gedruckt am ${druckDatum} um ${druckUhrzeit} Uhr`, marginX, 19);
+          doc.addImage(logoSrc, "PNG", pageWidth - marginX - 26, 6, 26, 26);
+
+          doc.setDrawColor(215, 220, 227);
+          doc.setLineWidth(0.2);
+          doc.line(marginX, pageHeight - 12, pageWidth - marginX, pageHeight - 12);
+          doc.setFontSize(7);
+          doc.setTextColor(85, 85, 85);
+          doc.setFont("helvetica", "normal");
+          doc.text("MENTOR - Leselern-Paten Reutlingen e.V.", marginX, pageHeight - 8);
+          doc.text("KI-powered by Hermes", pageWidth / 2, pageHeight - 8, { align: "center" });
+          doc.text(`Seite ${doc.internal.getCurrentPageInfo().pageNumber}`, pageWidth - marginX, pageHeight - 8, { align: "right" });
+        },
+      });
+
+      doc.save(`Kassenblatt_${data.jahr}.pdf`);
     } catch (e) {
       alert(`PDF konnte nicht erzeugt werden: ${e.message}`);
     } finally {
-      document.documentElement.classList.remove("kb-printing");
-      document.body.classList.remove("kb-printing");
       kbPrintBtn.disabled = false;
     }
+  });
+  // Fallback fuer manuelles Strg+P (nicht der eigentliche Drucken-Button) - haelt den
+  // Zeitstempel im @media print-Layout aktuell.
+  window.addEventListener("beforeprint", () => {
+    const now = new Date();
+    kbPrintMeta.textContent = `Gedruckt am ${now.toLocaleDateString("de-DE")} um ${now.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} Uhr`;
   });
   const kbTbody = document.getElementById("kb-tbody");
   const kbError = document.getElementById("kb-error");
@@ -1051,7 +1091,7 @@
   async function loadKassenblatt(jahr) {
     currentKbJahr = jahr || new Date().getFullYear();
     kbJahrLabel.textContent = currentKbJahr;
-    kbPrintTitle.textContent = `Kassenblatt: 01–12/${currentKbJahr}`;
+    kbPrintTitle.textContent = `Kassenblatt ${currentKbJahr}`;
     kbError.hidden = true;
     kbAnfangsbestandForm.hidden = true;
     kbTableWrap.hidden = false;
