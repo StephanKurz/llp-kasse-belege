@@ -17,13 +17,12 @@
   }
   * { box-sizing: border-box; }
   html, body {
-    margin: 0; padding: 0; height: 100%;
+    margin: 0; padding: 0;
     font-family: -apple-system, "Segoe UI", Arial, sans-serif;
     color: var(--text);
     background: var(--bg);
-    overflow: hidden;
   }
-  #app { display: flex; flex-direction: column; height: 100%; }
+  #app { display: flex; flex-direction: column; min-height: 100%; }
 
   #toolbar {
     flex: none; display: flex; align-items: center; justify-content: space-between;
@@ -50,8 +49,10 @@
 
   /* Feste 50/50-Aufteilung statt seitenverhaeltnis-abhaengiger Breite: auf grossen Bildschirmen
      bekommt die Vorschau dadurch reichlich Platz, und die Aufteilung aendert sich nicht mehr je
-     nach ausgewaehltem Beleg (behebt auch den Spalten-Reflow der Liste von vorher). */
-  #body { flex: 1 1 auto; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px 20px; overflow: hidden; }
+     nach ausgewaehltem Beleg (behebt auch den Spalten-Reflow der Liste von vorher).
+     Hoehe ist bewusst auf einen Bruchteil der Viewport-Hoehe begrenzt (statt die Seite zu fuellen)
+     - darunter braucht das Kassenblatt in voller Breite Platz. */
+  #body { flex: none; height: 46vh; min-height: 320px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px 20px; overflow: hidden; }
 
   #list-pane { min-width: 0; overflow-y: auto; }
   /* Immer exakt 2 Spalten, auch wenn eine Kachel aufgeklappt ist - keine Spaltenzahl-Aenderung
@@ -150,10 +151,72 @@
   body.dragging #drag-overlay { display: flex; }
 
   @media (max-width: 860px) {
-    html, body { overflow: auto; }
-    #body { grid-template-columns: 1fr; overflow: visible; }
+    #body { height: auto; max-height: 55vh; grid-template-columns: 1fr; overflow: visible; }
     #list-pane { max-height: 38vh; }
     #list { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+  }
+
+  #kb-section { flex: none; padding: 4px 20px 24px; }
+  #kb-toolbar { padding: 10px 0; display: flex; align-items: center; gap: 10px; }
+  #kb-toolbar h2 { font-size: 15px; margin: 0; font-weight: 600; }
+  .kb-jahr-nav { padding: 4px 9px; font-size: 12px; line-height: 1; }
+  #kb-error { color: var(--danger); font-size: 13px; margin-bottom: 8px; }
+
+  #kb-anfangsbestand-form {
+    background: #fff4e5; border: 1px solid #f0d9b5; border-radius: 8px;
+    padding: 10px 12px; margin-bottom: 10px; font-size: 13px;
+  }
+  #kb-anfangsbestand-form p { margin: 0 0 8px; color: #8a5300; }
+  .kb-inline-form { display: flex; align-items: center; gap: 8px; }
+  .kb-inline-form label { font-size: 12.5px; color: var(--muted); }
+  .kb-inline-form input {
+    width: 110px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px;
+    font-size: 13.5px; font-family: inherit;
+  }
+  #kb-anfangsbestand-msg:empty { display: none; }
+
+  #kb-abschluss-bar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 12px; margin-bottom: 10px; font-size: 13px;
+  }
+  #kb-abschluss-bar[hidden] { display: none; }
+  #kb-abschluss-bar .ok-text { color: var(--ok); }
+  #kb-abschluss-bar input {
+    width: 110px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 6px;
+    font-size: 13px; font-family: inherit;
+  }
+
+  /* max-height + overflow:auto auf dem Wrapper + position:sticky auf th ist die uebliche
+     Kombination, damit die Spaltenkoepfe beim Scrollen innerhalb der Tabelle erhalten bleiben
+     (siehe gleiches Muster im Budgetkontrolle-Tool). */
+  #kb-table-wrap {
+    max-height: 50vh; overflow: auto;
+    border: 1px solid var(--border); border-radius: 10px; background: var(--card-bg);
+  }
+  #kb-table { width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 0; font-size: 13px; }
+  #kb-table th, #kb-table td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  #kb-table th {
+    color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .02em;
+    background: var(--card-bg); position: sticky; top: 0; z-index: 2; box-shadow: 0 1px 0 var(--border);
+  }
+  #kb-table td.num, #kb-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  #kb-table tr:last-child td { border-bottom: none; }
+
+  .kb-datum-cell { display: inline-flex; align-items: center; gap: 6px; }
+  .kb-datum-missing { color: var(--muted); font-style: italic; }
+  .kb-edit-btn {
+    cursor: pointer; background: none; border: none; padding: 2px; color: var(--muted);
+    display: inline-flex; align-items: center; vertical-align: middle; flex: none;
+  }
+  .kb-edit-btn:hover { color: var(--text); }
+  .kb-datum-input {
+    width: 100%; padding: 4px 6px; border: 1px solid var(--border); border-radius: 5px;
+    font-size: 12.5px; font-family: inherit;
+  }
+
+  @media (max-width: 860px) {
+    #kb-table-wrap { max-height: 40vh; }
   }
 </style>
 </head>
@@ -178,6 +241,48 @@
     </div>
   </div>
 
+  <div id="kb-section">
+    <div id="kb-toolbar">
+      <button id="kb-jahr-prev" class="btn-secondary kb-jahr-nav" type="button" title="Vorjahr">◀</button>
+      <h2>Kassenblatt: 01–12/<span id="kb-jahr-label"></span></h2>
+      <button id="kb-jahr-next" class="btn-secondary kb-jahr-nav" type="button" title="Folgejahr">▶</button>
+    </div>
+    <div id="kb-error" hidden></div>
+    <div id="kb-anfangsbestand-form" hidden>
+      <p>Für dieses Jahr ist noch kein Anfangsbestand hinterlegt (und es gibt keinen bestätigten Jahresabschluss des Vorjahres, aus dem er automatisch übernommen werden könnte).</p>
+      <div class="kb-inline-form">
+        <label for="kb-anfangsbestand-input">Anfangsbestand zum 01.01. (€)</label>
+        <input type="number" step="0.01" id="kb-anfangsbestand-input">
+        <button id="kb-anfangsbestand-save" class="btn" type="button">Speichern</button>
+      </div>
+      <div id="kb-anfangsbestand-msg" class="row-msg"></div>
+    </div>
+    <div id="kb-abschluss-bar" hidden></div>
+    <div id="kb-table-wrap">
+      <table id="kb-table">
+        <colgroup>
+          <col style="width:110px">
+          <col style="width:110px">
+          <col style="width:110px">
+          <col style="width:130px">
+          <col style="width:110px">
+          <col>
+        </colgroup>
+        <thead>
+          <tr>
+            <th class="num">Einnahmen</th>
+            <th class="num">Ausgaben</th>
+            <th class="num">Bestand</th>
+            <th>Kassendatum</th>
+            <th>Belegdatum</th>
+            <th>Text</th>
+          </tr>
+        </thead>
+        <tbody id="kb-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
   <input type="file" id="file-input" accept="image/jpeg,image/png,application/pdf" multiple>
   <div id="drag-overlay">Beleg hier ablegen</div>
 </div>
@@ -187,16 +292,39 @@
   const ANALYSE_URL = `${BASE_URL}/kasse-beleg-analysieren`;
   const ANLEGEN_URL = `${BASE_URL}/kasse-beleg-anlegen`;
   const ADRESSE_URL = `${BASE_URL}/kasse-adresse-suchen`;
+  const KASSENBLATT_URL = `${BASE_URL}/kassenblatt-laden`;
+  const KASSENDATUM_URL = `${BASE_URL}/kassenblatt-kassendatum-speichern`;
+  const ANFANGSBESTAND_URL = `${BASE_URL}/kassenblatt-anfangsbestand-speichern`;
+  const ABSCHLUSS_URL = `${BASE_URL}/kassenblatt-jahresabschluss-bestaetigen`;
+
+  // Lucide "pencil" (MIT-Lizenz, lucide-icons/lucide) - gleiches Icon wie im Budgetkontrolle-Tool.
+  const PENCIL_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" ' +
+    'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 ' +
+    '.623.622l4.353-1.32a2 2 0 0 0 .83-.497z" /><path d="m15 5 4 4" /></svg>';
 
   const fileInput = document.getElementById("file-input");
   const uploadBtn = document.getElementById("upload-btn");
   const list = document.getElementById("list");
   const previewPane = document.getElementById("preview-pane");
+  const kbJahrLabel = document.getElementById("kb-jahr-label");
+  const kbJahrPrev = document.getElementById("kb-jahr-prev");
+  const kbJahrNext = document.getElementById("kb-jahr-next");
+  const kbTbody = document.getElementById("kb-tbody");
+  const kbError = document.getElementById("kb-error");
+  const kbTableWrap = document.getElementById("kb-table-wrap");
+  const kbAnfangsbestandForm = document.getElementById("kb-anfangsbestand-form");
+  const kbAnfangsbestandInput = document.getElementById("kb-anfangsbestand-input");
+  const kbAnfangsbestandSave = document.getElementById("kb-anfangsbestand-save");
+  const kbAnfangsbestandMsg = document.getElementById("kb-anfangsbestand-msg");
+  const kbAbschlussBar = document.getElementById("kb-abschluss-bar");
 
   let receipts = [];
   let openId = null;
   let idCounter = 0;
   let receiptCounter = 0;
+  let currentKbJahr = new Date().getFullYear();
 
   uploadBtn.addEventListener("click", () => fileInput.click());
   fileInput.addEventListener("change", (e) => {
@@ -454,6 +582,9 @@
       if (!resp.ok) throw new Error(result.error || `Fehler ${resp.status}`);
       r.status = "angelegt";
       r.result = result;
+      // Nur "kassenbeleg" legt eine Buchung auf der Kasse an (siehe kasse-beleg-anlegen) - nur
+      // dann gibt es ueberhaupt etwas Neues im Kassenblatt zu sehen.
+      if (result.belegtyp !== "rechnung") loadKassenblatt(currentKbJahr);
     } catch (e) {
       r.status = "anlegen_fehler";
       r.message = { type: "err", text: `Anlegen fehlgeschlagen: ${e.message}` };
@@ -768,8 +899,214 @@
     renderList();
   });
 
+  function fmtDateDE(iso) {
+    if (!iso) return "";
+    const [y, m, d] = iso.split("-");
+    return `${d}.${m}.${y}`;
+  }
+
+  let currentKbData = null;
+
+  async function loadKassenblatt(jahr) {
+    currentKbJahr = jahr || new Date().getFullYear();
+    kbJahrLabel.textContent = currentKbJahr;
+    kbError.hidden = true;
+    kbAnfangsbestandForm.hidden = true;
+    kbAbschlussBar.hidden = true;
+    kbTableWrap.hidden = false;
+    kbTbody.innerHTML = `<tr><td colspan="6" style="color:var(--muted)">Lade …</td></tr>`;
+    try {
+      const resp = await fetch(`${KASSENBLATT_URL}?jahr=${currentKbJahr}`);
+      const data = await resp.json();
+      if (!resp.ok) {
+        if (data.code === "anfangsbestand_fehlt") {
+          currentKbData = null;
+          kbTableWrap.hidden = true;
+          kbAnfangsbestandForm.hidden = false;
+          kbAnfangsbestandInput.value = "";
+          kbAnfangsbestandMsg.textContent = "";
+          kbAnfangsbestandMsg.className = "row-msg";
+          return;
+        }
+        throw new Error(data.error || `Fehler ${resp.status}`);
+      }
+      currentKbData = data;
+      renderKassenblatt(data);
+      renderAbschlussBar(data);
+    } catch (e) {
+      kbTbody.innerHTML = "";
+      kbError.hidden = false;
+      kbError.textContent = `Kassenblatt konnte nicht geladen werden: ${e.message}`;
+    }
+  }
+
+  function renderKassenblatt(data) {
+    if (!data.rows.length) {
+      kbTbody.innerHTML = `<tr><td colspan="6" style="color:var(--muted)">Noch keine Buchungen im Jahr ${data.jahr}.</td></tr>`;
+      return;
+    }
+    kbTbody.innerHTML = "";
+    for (const row of data.rows) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td class="num">${row.einnahme != null ? euro(row.einnahme) + " €" : ""}</td>
+        <td class="num">${row.ausgabe != null ? euro(row.ausgabe) + " €" : ""}</td>
+        <td class="num">${euro(row.bestand)} €</td>
+        <td class="kb-datum-td"></td>
+        <td>${fmtDateDE(row.belegdatum)}</td>
+        <td>${esc(row.text)}</td>
+      `;
+      kbTbody.appendChild(tr);
+      renderKassendatumCell(tr.querySelector(".kb-datum-td"), row);
+    }
+  }
+
+  // Aktuell rechnerischer Bestand zum Jahresende (letzte Buchungszeile, sonst Anfangsbestand,
+  // wenn im Jahr noch nichts gebucht wurde) - Vorschlagswert fuer die Abschluss-Bestaetigung.
+  function computeAktuellerEndbestand(data) {
+    if (data.rows.length > 0) return data.rows[data.rows.length - 1].bestand;
+    return data.anfangsbestand;
+  }
+
+  function renderAbschlussBar(data) {
+    kbAbschlussBar.hidden = false;
+    if (data.abgeschlossen) {
+      const datum = data.abgeschlossen_am ? fmtDateDE(String(data.abgeschlossen_am).slice(0, 10)) : "";
+      kbAbschlussBar.innerHTML = `
+        <span class="ok-text">✓ Jahresabschluss bestätigt${datum ? " am " + datum : ""}: ${euro(data.endbestand)} €</span>
+        <button id="kb-abschluss-undo" class="btn-secondary" type="button">Bestätigung aufheben</button>
+      `;
+      document.getElementById("kb-abschluss-undo").addEventListener("click", () => setAbschluss(data.jahr, false, null));
+      return;
+    }
+    const vorschlag = computeAktuellerEndbestand(data);
+    kbAbschlussBar.innerHTML = `
+      <span>Jahresendbestand (Stand jetzt): </span>
+      <input type="number" step="0.01" id="kb-endbestand-input" value="${vorschlag.toFixed(2)}">
+      <span>€</span>
+      <button id="kb-abschluss-confirm" class="btn" type="button">Jahresabschluss bestätigen</button>
+      <span style="color:var(--muted); font-size:12px;">Wird automatisch zum Anfangsbestand ${data.jahr + 1}.</span>
+    `;
+    document.getElementById("kb-abschluss-confirm").addEventListener("click", () => {
+      const val = parseFloat(document.getElementById("kb-endbestand-input").value);
+      if (!Number.isFinite(val)) return;
+      setAbschluss(data.jahr, true, val);
+    });
+  }
+
+  async function setAbschluss(jahr, bestaetigt, endbestand) {
+    kbAbschlussBar.innerHTML = `<span style="color:var(--muted)">Speichere …</span>`;
+    try {
+      const resp = await fetch(ABSCHLUSS_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jahr, bestaetigt, endbestand }),
+      });
+      const result = await resp.json();
+      if (!resp.ok) throw new Error(result.error || `Fehler ${resp.status}`);
+      await loadKassenblatt(currentKbJahr);
+    } catch (e) {
+      alert(`Jahresabschluss konnte nicht gespeichert werden: ${e.message}`);
+      await loadKassenblatt(currentKbJahr);
+    }
+  }
+
+  kbJahrPrev.addEventListener("click", () => loadKassenblatt(currentKbJahr - 1));
+  kbJahrNext.addEventListener("click", () => loadKassenblatt(currentKbJahr + 1));
+
+  kbAnfangsbestandSave.addEventListener("click", async () => {
+    const val = parseFloat(kbAnfangsbestandInput.value);
+    if (!Number.isFinite(val)) {
+      kbAnfangsbestandMsg.textContent = "Bitte einen gültigen Betrag eingeben.";
+      kbAnfangsbestandMsg.className = "row-msg err";
+      return;
+    }
+    kbAnfangsbestandSave.disabled = true;
+    try {
+      const resp = await fetch(ANFANGSBESTAND_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jahr: currentKbJahr, anfangsbestand: val }),
+      });
+      const result = await resp.json();
+      if (!resp.ok) throw new Error(result.error || `Fehler ${resp.status}`);
+      await loadKassenblatt(currentKbJahr);
+    } catch (e) {
+      kbAnfangsbestandMsg.textContent = `Speichern fehlgeschlagen: ${e.message}`;
+      kbAnfangsbestandMsg.className = "row-msg err";
+    } finally {
+      kbAnfangsbestandSave.disabled = false;
+    }
+  });
+
+  function renderKassendatumCell(td, row) {
+    td.innerHTML = "";
+    const wrap = document.createElement("div");
+    wrap.className = "kb-datum-cell";
+    const valueSpan = document.createElement("span");
+    if (row.kassendatum) {
+      valueSpan.textContent = fmtDateDE(row.kassendatum);
+    } else {
+      valueSpan.textContent = "—";
+      valueSpan.className = "kb-datum-missing";
+    }
+    const editBtn = document.createElement("button");
+    editBtn.className = "kb-edit-btn";
+    editBtn.type = "button";
+    editBtn.title = "Kassendatum bearbeiten";
+    editBtn.innerHTML = PENCIL_SVG;
+    wrap.append(valueSpan, editBtn);
+    td.appendChild(wrap);
+    editBtn.addEventListener("click", () => renderKassendatumEdit(td, row));
+  }
+
+  function renderKassendatumEdit(td, row) {
+    td.innerHTML = "";
+    const input = document.createElement("input");
+    input.type = "date";
+    input.className = "kb-datum-input";
+    input.value = row.kassendatum || "";
+    td.appendChild(input);
+    input.focus();
+
+    let done = false;
+    const commit = async () => {
+      if (done) return;
+      done = true;
+      const val = input.value;
+      if (!val) {
+        renderKassendatumCell(td, row);
+        return;
+      }
+      td.innerHTML = `<span style="color:var(--muted)">Speichere …</span>`;
+      try {
+        const resp = await fetch(KASSENDATUM_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ booking_id: row.booking_id, kassendatum: val }),
+        });
+        const result = await resp.json();
+        if (!resp.ok) throw new Error(result.error || `Fehler ${resp.status}`);
+        row.kassendatum = val;
+        renderKassendatumCell(td, row);
+      } catch (e) {
+        renderKassendatumCell(td, row);
+        alert(`Kassendatum konnte nicht gespeichert werden: ${e.message}`);
+      }
+    };
+    input.addEventListener("blur", commit);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") input.blur();
+      if (e.key === "Escape") {
+        done = true;
+        renderKassendatumCell(td, row);
+      }
+    });
+  }
+
   renderList();
   renderPreview();
+  loadKassenblatt(currentKbJahr);
 </script>
 </body>
 </html>
