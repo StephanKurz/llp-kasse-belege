@@ -1163,12 +1163,14 @@
       renderKassenblatt(data);
       // Aktueller Bestand neben dem Folgejahr-Pfeil: bestaetigter Endbestand, falls das Jahr
       // abgeschlossen ist, sonst der rechnerische Stand (auch fuer bereits vergangene, aber noch
-      // nicht abgeschlossene Jahre) - "(Endbestand)" nur, wenn es sich tatsaechlich um einen
-      // (bestaetigten oder vergangenen) Jahresabschluss handelt, nicht bei einem laufenden Jahr.
+      // Nur fuer das laufende Jahr (kein Endbestand vorhanden) - sobald das Jahr vorbei oder
+      // abgeschlossen ist, gibt es dafuer bereits die Endbestand-Zeile in der Tabelle, daher hier
+      // keine zusaetzliche Ausgabe.
       const jahrIstVorbei = new Date().getFullYear() > data.jahr;
-      const istEndbestand = data.abgeschlossen || jahrIstVorbei;
-      const bestandWert = data.abgeschlossen ? data.endbestand : computeAktuellerEndbestand(data);
-      kbBestandAnzeige.textContent = `Aktueller Kassenbestand: ${euro(bestandWert)} €${istEndbestand ? " (Endbestand)" : ""}`;
+      const hatEndbestand = data.abgeschlossen || jahrIstVorbei;
+      kbBestandAnzeige.textContent = hatEndbestand
+        ? ""
+        : `Aktueller Kassenbestand: ${euro(computeAktuellerEndbestand(data))} €`;
     } catch (e) {
       kbTbody.innerHTML = "";
       kbError.hidden = false;
