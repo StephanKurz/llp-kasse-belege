@@ -199,7 +199,7 @@
   #kb-anfangsbestand-msg:empty { display: none; }
 
   .kb-row-bold td { font-weight: 700; }
-  .kb-endbestand-undo-btn { padding: 3px 8px; font-size: 11px; font-weight: 600; }
+  .kb-endbestand-undo-btn { padding: 3px 8px; font-size: 11px; font-weight: 600; white-space: nowrap; }
 
   /* flex:1 statt festem vh-Mass - der Wrapper nimmt genau die Hoehe ein, die innerhalb von
      #kb-section nach Toolbar/Formularen/Abschluss-Leiste noch uebrig bleibt (so passt die Summe
@@ -1058,6 +1058,7 @@
     const jahrIstVorbei = new Date().getFullYear() > data.jahr;
     if (data.abgeschlossen || jahrIstVorbei) {
       const endTr = document.createElement("tr");
+      endTr.className = "kb-row-bold";
       endTr.innerHTML = `
         <td class="num"></td>
         <td class="num"></td>
@@ -1080,20 +1081,21 @@
 
   function renderEndbestandDisplay(tdBestand, tdText, data) {
     tdBestand.innerHTML = "";
+    tdText.innerHTML = "";
     if (data.abgeschlossen) {
+      tdBestand.textContent = euro(data.endbestand) + " €";
+      const datum = data.abgeschlossen_am ? fmtDateDE(String(data.abgeschlossen_am).slice(0, 10)) : "";
       const wrap = document.createElement("div");
       wrap.className = "kb-datum-cell";
-      const valueSpan = document.createElement("span");
-      valueSpan.textContent = euro(data.endbestand) + " €";
+      const textSpan = document.createElement("span");
+      textSpan.textContent = `Endbestand ${data.jahr}${datum ? " (bestätigt am " + datum + ")" : ""}`;
       const undoBtn = document.createElement("button");
       undoBtn.className = "btn-secondary kb-endbestand-undo-btn";
       undoBtn.type = "button";
       undoBtn.textContent = "Bestätigung aufheben";
-      wrap.append(valueSpan, undoBtn);
-      tdBestand.appendChild(wrap);
       undoBtn.addEventListener("click", () => setAbschluss(data.jahr, false, null));
-      const datum = data.abgeschlossen_am ? fmtDateDE(String(data.abgeschlossen_am).slice(0, 10)) : "";
-      tdText.textContent = `Endbestand ${data.jahr}${datum ? " (bestätigt am " + datum + ")" : ""}`;
+      wrap.append(textSpan, undoBtn);
+      tdText.appendChild(wrap);
     } else {
       const wrap = document.createElement("div");
       wrap.className = "kb-datum-cell";
