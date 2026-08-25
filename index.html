@@ -174,6 +174,14 @@
   #kb-toolbar { flex: none; padding: 10px 0; display: flex; align-items: center; gap: 10px; }
   #kb-toolbar h2 { font-size: 15px; margin: 0; font-weight: 600; }
   .kb-jahr-nav { padding: 4px 9px; font-size: 12px; line-height: 1; }
+  .kb-jahr-value { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .kb-print-btn {
+    margin-left: auto;
+    cursor: pointer; background: none; border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 10px; color: var(--text); display: inline-flex; align-items: center;
+  }
+  .kb-print-btn:hover { background: var(--bg); }
+  .kb-print-only { display: none; }
   #kb-error { flex: none; color: var(--danger); font-size: 13px; margin-bottom: 8px; }
 
   #kb-anfangsbestand-form {
@@ -237,6 +245,18 @@
     #kb-section { flex: none; overflow: visible; }
     #kb-table-wrap { flex: none; max-height: 40vh; }
   }
+
+  /* Sauberer Ausdruck: nur die Kassenblatt-Tabelle, ohne Kassenbelege-Bereich, Steuerelemente
+     oder Bearbeiten-Icons. */
+  @media print {
+    #toolbar, #body, #kb-toolbar, #kb-error, #kb-anfangsbestand-form,
+    #kb-abschluss-bar, .kb-edit-btn {
+      display: none !important;
+    }
+    html, body { height: auto !important; overflow: visible !important; }
+    #app, #kb-section, #kb-table-wrap { height: auto !important; max-height: none !important; overflow: visible !important; flex: none !important; }
+    .kb-print-only { display: block !important; font-size: 16px; margin: 0 0 12px; }
+  }
 </style>
 </head>
 <body>
@@ -262,10 +282,13 @@
 
   <div id="kb-section">
     <div id="kb-toolbar">
+      <h2>Kassenblatt</h2>
       <button id="kb-jahr-prev" class="btn-secondary kb-jahr-nav" type="button" title="Vorjahr">◀</button>
-      <h2>Kassenblatt: 01–12/<span id="kb-jahr-label"></span></h2>
+      <span id="kb-jahr-label" class="kb-jahr-value"></span>
       <button id="kb-jahr-next" class="btn-secondary kb-jahr-nav" type="button" title="Folgejahr">▶</button>
+      <button id="kb-print-btn" class="kb-print-btn" type="button" title="Kassenblatt drucken"></button>
     </div>
+    <h2 id="kb-print-title" class="kb-print-only"></h2>
     <div id="kb-error" hidden></div>
     <div id="kb-anfangsbestand-form" hidden>
       <p>Für dieses Jahr ist noch kein Anfangsbestand hinterlegt (und es gibt keinen bestätigten Jahresabschluss des Vorjahres, aus dem er automatisch übernommen werden könnte).</p>
@@ -323,13 +346,25 @@
     '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 ' +
     '.623.622l4.353-1.32a2 2 0 0 0 .83-.497z" /><path d="m15 5 4 4" /></svg>';
 
+  // Lucide "printer" (MIT-Lizenz, lucide-icons/lucide).
+  const PRINTER_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" ' +
+    'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />' +
+    '<path d="M6 9V3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v6" />' +
+    '<rect x="6" y="14" width="12" height="8" rx="1" /></svg>';
+
   const fileInput = document.getElementById("file-input");
   const uploadBtn = document.getElementById("upload-btn");
   const list = document.getElementById("list");
   const previewPane = document.getElementById("preview-pane");
   const kbJahrLabel = document.getElementById("kb-jahr-label");
+  const kbPrintTitle = document.getElementById("kb-print-title");
   const kbJahrPrev = document.getElementById("kb-jahr-prev");
   const kbJahrNext = document.getElementById("kb-jahr-next");
+  const kbPrintBtn = document.getElementById("kb-print-btn");
+  kbPrintBtn.innerHTML = PRINTER_SVG;
+  kbPrintBtn.addEventListener("click", () => window.print());
   const kbTbody = document.getElementById("kb-tbody");
   const kbError = document.getElementById("kb-error");
   const kbTableWrap = document.getElementById("kb-table-wrap");
@@ -929,6 +964,7 @@
   async function loadKassenblatt(jahr) {
     currentKbJahr = jahr || new Date().getFullYear();
     kbJahrLabel.textContent = currentKbJahr;
+    kbPrintTitle.textContent = `Kassenblatt: 01–12/${currentKbJahr}`;
     kbError.hidden = true;
     kbAnfangsbestandForm.hidden = true;
     kbAbschlussBar.hidden = true;
