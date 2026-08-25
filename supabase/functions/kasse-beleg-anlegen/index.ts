@@ -176,6 +176,41 @@ async function evRequest(
   throw new Error("Easyverein: zu viele 429-Antworten, abgebrochen.");
 }
 
+// Kassenminus-Pruefung: ermittelt den aktuellen Kassenbestand (Anfangsbestand des laufenden
+// Jahres aus kasse_jahresanfangsbestand + Summe aller Kasse-Buchungen des laufenden Jahres) -
+// dieselbe Rechnung wie im Kassenblatt (siehe kassenblatt-laden), hier aber ohne Bezug auf ein
+// angezeigtes Jahr, sondern immer bezogen auf das aktuelle Kalenderjahr, da eine neue Ausgabe
+// immer den JETZIGEN Bestand betrifft.
+async function ermittleAktuellenKassenbestand(
+  evApiKey: string,
+  supabaseUrl: string,
+  serviceRoleKey: string,
+): Promise<number | null> {
+  const jahr = new Date().getFullYear();
+  const anfangsResp = await fetch(
+    `${supabaseUrl}/rest/v1/kasse_jahresanfangsbestand?jahr=eq.${jahr}&select=anfangsbestand`,
+    { headers: { apikey: serviceRoleKey, Authorization: `Bearer ${serviceRoleKey}` } },
+  );
+  const anfangsRows = await anfangsResp.json();
+  if (!Array.isArray(anfangsRows) || anfangsRows.length === 0) return null;
+  const anfangsbestand = Number(anfangsRows[0].anfangsbestand);
+
+  const jahrStart = `${jahr}-01-01`;
+  const jahrEnde = `${jahr}-12-31`;
+  let bestand = anfangsbestand;
+  let url: string | null = `${EV_BASE_URL}/booking/?bankAccount=${KASSE_BANK_ACCOUNT_ID}&ordering=date&limit=100`;
+  while (url) {
+    const res = await evRequest("GET", url, evApiKey);
+    if (!res.ok) throw new Error(evErrorText(res.json));
+    for (const b of res.json.results || []) {
+      const d = String(b.date || "").slice(0, 10);
+      if (d >= jahrStart && d <= jahrEnde) bestand += Number(b.amount);
+    }
+    url = res.json.next || null;
+  }
+  return Math.round(bestand * 100) / 100;
+}
+
 async function evUploadAttachment(
   invoiceId: number,
   pdfBytes: Uint8Array,
@@ -351,6 +386,41 @@ Deno.serve(async (req: Request) => {
       { error: `Unbekannte Buchungskonto-Nummer: ${buchungskonto_nr}. Erlaubt sind: ${Object.keys(BUCHUNGSKONTEN).join(", ")}` },
       400,
     );
+  }
+
+  // Kassenminus-Pruefung: eine Ausgabe (sofort bar bezahlt) darf den Kassenbestand nie negativ
+  // werden lassen. Bewusst VOR jeder Easyverein-Schreiboperation (Invoice/Booking) geprueft, damit
+  // bei Ablehnung ueberhaupt nichts angelegt wird - kein halb angelegter Beleg ohne Buchung.
+  // Einnahmen und Rechnungen (Zahlungsziel, noch keine Kasse-Bewegung) sind nie betroffen.
+  if (belegtypNorm === "kassenbeleg" && artNorm === "expense") {
+    let aktuellerBestand: number | null;
+    try {
+      aktuellerBestand = await ermittleAktuellenKassenbestand(evApiKey, SUPABASE_URL, SERVICE_ROLE_KEY);
+    } catch (e) {
+      return jsonResponse(
+        {
+          error: `Kassenbestand konnte nicht ermittelt werden (${e instanceof Error ? e.message : e}). Buchung wurde sicherheitshalber nicht angelegt.`,
+        },
+        502,
+      );
+    }
+    if (aktuellerBestand == null) {
+      return jsonResponse(
+        {
+          error: `Kassenbestand konnte nicht ermittelt werden - fuer das laufende Jahr ist im Kassenblatt noch kein Anfangsbestand hinterlegt. Buchung wurde sicherheitshalber nicht angelegt.`,
+        },
+        409,
+      );
+    }
+    const neuerBestand = Math.round((aktuellerBestand - betrag) * 100) / 100;
+    if (neuerBestand < 0) {
+      return jsonResponse(
+        {
+          error: `Diese Ausgabe (${betrag.toFixed(2)} €) wuerde den Kassenbestand auf ${neuerBestand.toFixed(2)} € druecken - der Kassenbestand darf nicht negativ werden. Aktueller Kassenbestand: ${aktuellerBestand.toFixed(2)} €. Die Buchung wurde nicht angelegt.`,
+        },
+        409,
+      );
+    }
   }
 
   let pdfBytes: Uint8Array;
