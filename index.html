@@ -275,7 +275,7 @@
             <th class="num">Bestand</th>
             <th>Kassendatum</th>
             <th>Belegdatum</th>
-            <th>Text</th>
+            <th>Verwendung</th>
           </tr>
         </thead>
         <tbody id="kb-tbody"></tbody>
@@ -941,11 +941,24 @@
   }
 
   function renderKassenblatt(data) {
+    kbTbody.innerHTML = "";
+    const anfangsTr = document.createElement("tr");
+    anfangsTr.innerHTML = `
+      <td class="num"></td>
+      <td class="num"></td>
+      <td class="num">${euro(data.anfangsbestand)} €</td>
+      <td></td>
+      <td>${fmtDateDE(`${data.jahr}-01-01`)}</td>
+      <td>Anfangsbestand ${data.jahr}</td>
+    `;
+    kbTbody.appendChild(anfangsTr);
+
     if (!data.rows.length) {
-      kbTbody.innerHTML = `<tr><td colspan="6" style="color:var(--muted)">Noch keine Buchungen im Jahr ${data.jahr}.</td></tr>`;
+      const emptyTr = document.createElement("tr");
+      emptyTr.innerHTML = `<td colspan="6" style="color:var(--muted)">Noch keine Buchungen im Jahr ${data.jahr}.</td>`;
+      kbTbody.appendChild(emptyTr);
       return;
     }
-    kbTbody.innerHTML = "";
     for (const row of data.rows) {
       const tr = document.createElement("tr");
       tr.innerHTML = `
@@ -969,8 +982,8 @@
   }
 
   function renderAbschlussBar(data) {
-    kbAbschlussBar.hidden = false;
     if (data.abgeschlossen) {
+      kbAbschlussBar.hidden = false;
       const datum = data.abgeschlossen_am ? fmtDateDE(String(data.abgeschlossen_am).slice(0, 10)) : "";
       kbAbschlussBar.innerHTML = `
         <span class="ok-text">✓ Jahresabschluss bestätigt${datum ? " am " + datum : ""}: ${euro(data.endbestand)} €</span>
@@ -979,6 +992,14 @@
       document.getElementById("kb-abschluss-undo").addEventListener("click", () => setAbschluss(data.jahr, false, null));
       return;
     }
+    // Der Schalter (und der Hinweistext dazu) darf erst nach dem 31.12. des jeweiligen Jahres
+    // erscheinen - vorher gibt es noch keinen endgueltigen Jahresendbestand zu bestaetigen.
+    const jahrIstVorbei = new Date().getFullYear() > data.jahr;
+    if (!jahrIstVorbei) {
+      kbAbschlussBar.hidden = true;
+      return;
+    }
+    kbAbschlussBar.hidden = false;
     const vorschlag = computeAktuellerEndbestand(data);
     kbAbschlussBar.innerHTML = `
       <span>Jahresendbestand (Stand jetzt): </span>
