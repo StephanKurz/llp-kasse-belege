@@ -407,7 +407,7 @@ Deno.serve(async (req: Request) => {
     if (aktuellerBestand == null) {
       return jsonResponse(
         {
-          error: `Kassenbestand konnte nicht ermittelt werden - fuer das laufende Jahr ist im Kassenblatt noch kein Anfangsbestand hinterlegt. Buchung wurde sicherheitshalber nicht angelegt.`,
+          error: `Kassenbestand konnte nicht ermittelt werden - für das laufende Jahr ist im Kassenblatt noch kein Anfangsbestand hinterlegt. Buchung wurde sicherheitshalber nicht angelegt.`,
         },
         409,
       );
@@ -416,7 +416,8 @@ Deno.serve(async (req: Request) => {
     if (neuerBestand < 0) {
       return jsonResponse(
         {
-          error: `Diese Ausgabe (${betrag.toFixed(2)} €) wuerde den Kassenbestand auf ${neuerBestand.toFixed(2)} € druecken - der Kassenbestand darf nicht negativ werden. Aktueller Kassenbestand: ${aktuellerBestand.toFixed(2)} €. Die Buchung wurde nicht angelegt.`,
+          error: `Diese Ausgabe (${betrag.toFixed(2)} €) würde den Kassenbestand auf ${neuerBestand.toFixed(2)} € drücken - der Kassenbestand darf nicht negativ werden. Aktueller Kassenbestand: ${aktuellerBestand.toFixed(2)} €. Die Buchung wurde nicht angelegt.`,
+          code: "kassenminus",
         },
         409,
       );
