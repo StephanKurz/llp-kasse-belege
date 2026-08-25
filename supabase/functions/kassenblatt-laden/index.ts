@@ -1,9 +1,8 @@
 // Laedt das Kassenblatt fuer ein Jahr: live alle Buchungen von Easyverein auf dem Bankkonto
 // "Kasse" (bankAccount-Filter serverseitig zuverlaessig, siehe Memory
-// reference_ev_bankaccount_booking_api), ergaenzt um das manuell gepflegte Kassendatum aus
-// kasse_kassendatum und den Jahres-Anfangsbestand aus kasse_jahresanfangsbestand. Keine eigene
-// Kopie der Buchungsdaten - Easyverein bleibt alleinige Quelle der Wahrheit fuer
-// Betrag/Text/Belegdatum, nur das Kassendatum wird lokal ergaenzt.
+// reference_ev_bankaccount_booking_api), ergaenzt um den Jahres-Anfangsbestand aus
+// kasse_jahresanfangsbestand. Keine eigene Kopie der Buchungsdaten - Easyverein bleibt
+// alleinige Quelle der Wahrheit fuer Betrag/Text/Belegdatum.
 //
 // Anfangsbestand-Ermittlung: existiert noch keine Zeile fuer das angefragte Jahr, wird zunaechst
 // geprueft, ob das Vorjahr einen bestaetigten Jahresabschluss hat (abgeschlossen=true) - falls ja,
@@ -126,12 +125,6 @@ Deno.serve(async (req: Request) => {
     const anfangsInfo = anfangsRows[0];
     const anfangsbestand = Number(anfangsInfo.anfangsbestand);
 
-    const kdRows = await sbGet(SUPABASE_URL, SERVICE_ROLE_KEY, `kasse_kassendatum?select=booking_id,kassendatum`);
-    const kassendatumMap = new Map<number, string>();
-    if (Array.isArray(kdRows)) {
-      for (const row of kdRows) kassendatumMap.set(Number(row.booking_id), row.kassendatum);
-    }
-
     const bookingsUrl = `${EV_BASE_URL}/booking/?bankAccount=${KASSE_BANK_ACCOUNT_ID}&ordering=date&limit=${PAGE_LIMIT}`;
     const bookings = await evGetPaginated(bookingsUrl, evApiKey);
 
@@ -155,7 +148,6 @@ Deno.serve(async (req: Request) => {
         einnahme: amount > 0 ? amount : null,
         ausgabe: amount < 0 ? Math.abs(amount) : null,
         bestand: Math.round(bestand * 100) / 100,
-        kassendatum: kassendatumMap.get(b.id) || null,
       };
     });
 

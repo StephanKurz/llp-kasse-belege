@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kassenbelege</title>
+<script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.2/dist/html2pdf.bundle.min.js"></script>
 <style>
   :root {
     --accent: #bd0010;
@@ -221,7 +222,6 @@
   #kb-table tr:last-child td { border-bottom: none; }
 
   .kb-datum-cell { display: inline-flex; align-items: center; gap: 6px; }
-  .kb-datum-missing { color: var(--muted); font-style: italic; }
   .kb-edit-btn {
     cursor: pointer; background: none; border: none; padding: 2px; color: var(--muted);
     display: inline-flex; align-items: center; vertical-align: middle; flex: none;
@@ -243,13 +243,20 @@
      Hochformat unabhaengig von der Browser-Voreinstellung. */
   @page { size: portrait; margin: 15mm; }
 
+  /* Diese Regeln gelten sowohl fuer den echten Browser-Druck (@media print, z.B. Strg+P als
+     Fallback) als auch fuer die PDF-Erzeugung per html2pdf.js, die den DOM waehrend der Erzeugung
+     rasterisiert und daher die CSS-Medienabfrage "print" nicht automatisch anwendet - dafuer wird
+     stattdessen kurzzeitig die Klasse "kb-printing" auf <body> gesetzt (siehe kbPrintBtn-Handler). */
+  @page { size: portrait; margin: 15mm; }
+
   @media print {
-    #toolbar, #body, #kb-toolbar, #kb-error, #kb-anfangsbestand-form, .kb-edit-btn {
+    #toolbar, #body, #kb-toolbar, #kb-error, #kb-anfangsbestand-form,
+    .kb-edit-btn, .kb-endbestand-undo-btn {
       display: none !important;
     }
     html, body { height: auto !important; overflow: visible !important; font-family: Arial, Helvetica, sans-serif; }
     #app, #kb-section, #kb-table-wrap { height: auto !important; max-height: none !important; overflow: visible !important; flex: none !important; }
-    #kb-table-wrap { border: none !important; padding-bottom: 24mm; }
+    #kb-table-wrap { border: none !important; }
 
     .kb-print-only { display: block; }
     #kb-print-header {
@@ -262,10 +269,33 @@
 
     #kb-print-footer {
       display: block !important;
-      position: fixed; bottom: 0; left: 0; right: 0;
-      border-top: 1px solid var(--border); padding-top: 6px;
+      border-top: 1px solid var(--border); padding-top: 6px; margin-top: 16px;
       text-align: center; font-size: 8px; color: #555555; line-height: 1.5;
     }
+  }
+
+  body.kb-printing #toolbar, body.kb-printing #body, body.kb-printing #kb-toolbar,
+  body.kb-printing #kb-error, body.kb-printing #kb-anfangsbestand-form,
+  body.kb-printing .kb-edit-btn, body.kb-printing .kb-endbestand-undo-btn {
+    display: none !important;
+  }
+  html.kb-printing, body.kb-printing { height: auto !important; overflow: visible !important; font-family: Arial, Helvetica, sans-serif; }
+  body.kb-printing #app, body.kb-printing #kb-section, body.kb-printing #kb-table-wrap {
+    height: auto !important; max-height: none !important; overflow: visible !important; flex: none !important;
+  }
+  body.kb-printing #kb-table-wrap { border: none !important; }
+  body.kb-printing .kb-print-only { display: block !important; }
+  body.kb-printing #kb-print-header {
+    display: flex !important; align-items: flex-start; justify-content: space-between;
+    border-bottom: 2px solid var(--accent); padding-bottom: 8px; margin-bottom: 14px;
+  }
+  body.kb-printing #kb-print-title { font-size: 18px; margin: 0; color: var(--accent); }
+  body.kb-printing #kb-print-meta { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  body.kb-printing #kb-print-logo { height: 20mm; width: auto; }
+  body.kb-printing #kb-print-footer {
+    display: block !important;
+    border-top: 1px solid var(--border); padding-top: 6px; margin-top: 16px;
+    text-align: center; font-size: 8px; color: #555555; line-height: 1.5;
   }
 </style>
 </head>
@@ -321,7 +351,6 @@
           <col style="width:110px">
           <col style="width:110px">
           <col style="width:110px">
-          <col style="width:130px">
           <col style="width:110px">
           <col>
         </colgroup>
@@ -330,7 +359,6 @@
             <th class="num">Einnahmen</th>
             <th class="num">Ausgaben</th>
             <th class="num">Bestand</th>
-            <th class="kb-date-col">Kassendatum</th>
             <th class="kb-date-col">Belegdatum</th>
             <th>Verwendung</th>
           </tr>
@@ -355,7 +383,6 @@
   const ANLEGEN_URL = `${BASE_URL}/kasse-beleg-anlegen`;
   const ADRESSE_URL = `${BASE_URL}/kasse-adresse-suchen`;
   const KASSENBLATT_URL = `${BASE_URL}/kassenblatt-laden`;
-  const KASSENDATUM_URL = `${BASE_URL}/kassenblatt-kassendatum-speichern`;
   const ANFANGSBESTAND_URL = `${BASE_URL}/kassenblatt-anfangsbestand-speichern`;
   const ABSCHLUSS_URL = `${BASE_URL}/kassenblatt-jahresabschluss-bestaetigen`;
 
@@ -385,12 +412,46 @@
   const kbPrintBtn = document.getElementById("kb-print-btn");
   const kbPrintMeta = document.getElementById("kb-print-meta");
   kbPrintBtn.innerHTML = PRINTER_SVG;
-  kbPrintBtn.addEventListener("click", () => {
+  // Erzeugt eine echte PDF-Datei im Vereinsdesign statt den Systemdruckdialog zu oeffnen.
+  // html2pdf.js rasterisiert den DOM und wendet dabei KEINE @media print-Regeln an - deshalb wird
+  // kurzzeitig die Klasse "kb-printing" gesetzt, die dieselbe Optik erzwingt (siehe CSS oben).
+  kbPrintBtn.addEventListener("click", async () => {
     const now = new Date();
     const datum = now.toLocaleDateString("de-DE");
     const uhrzeit = now.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
     kbPrintMeta.textContent = `Gedruckt am ${datum} um ${uhrzeit} Uhr`;
-    window.print();
+
+    kbPrintBtn.disabled = true;
+    document.documentElement.classList.add("kb-printing");
+    document.body.classList.add("kb-printing");
+    await new Promise((r) => setTimeout(r, 50));
+
+    try {
+      const section = document.getElementById("kb-section");
+      await html2pdf()
+        .set({
+          margin: 10,
+          filename: `Kassenblatt_${currentKbJahr}.pdf`,
+          image: { type: "jpeg", quality: 0.98 },
+          html2canvas: {
+            scale: 2,
+            useCORS: true,
+            scrollY: 0,
+            windowWidth: document.documentElement.scrollWidth,
+            windowHeight: section.scrollHeight,
+          },
+          jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+          pagebreak: { mode: ["css", "legacy"], avoid: "tr" },
+        })
+        .from(section)
+        .save();
+    } catch (e) {
+      alert(`PDF konnte nicht erzeugt werden: ${e.message}`);
+    } finally {
+      document.documentElement.classList.remove("kb-printing");
+      document.body.classList.remove("kb-printing");
+      kbPrintBtn.disabled = false;
+    }
   });
   const kbTbody = document.getElementById("kb-tbody");
   const kbError = document.getElementById("kb-error");
@@ -994,7 +1055,7 @@
     kbError.hidden = true;
     kbAnfangsbestandForm.hidden = true;
     kbTableWrap.hidden = false;
-    kbTbody.innerHTML = `<tr><td colspan="6" style="color:var(--muted)">Lade …</td></tr>`;
+    kbTbody.innerHTML = `<tr><td colspan="5" style="color:var(--muted)">Lade …</td></tr>`;
     try {
       const resp = await fetch(`${KASSENBLATT_URL}?jahr=${currentKbJahr}`);
       const data = await resp.json();
@@ -1027,7 +1088,6 @@
       <td class="num"></td>
       <td class="num"></td>
       <td class="num">${euro(data.anfangsbestand)} €</td>
-      <td class="kb-date-col"></td>
       <td class="kb-date-col">${fmtDateDE(`${data.jahr}-01-01`)}</td>
       <td>Anfangsbestand ${data.jahr}</td>
     `;
@@ -1035,7 +1095,7 @@
 
     if (!data.rows.length) {
       const emptyTr = document.createElement("tr");
-      emptyTr.innerHTML = `<td colspan="6" style="color:var(--muted)">Noch keine Buchungen im Jahr ${data.jahr}.</td>`;
+      emptyTr.innerHTML = `<td colspan="5" style="color:var(--muted)">Noch keine Buchungen im Jahr ${data.jahr}.</td>`;
       kbTbody.appendChild(emptyTr);
     } else {
       for (const row of data.rows) {
@@ -1044,12 +1104,10 @@
           <td class="num">${row.einnahme != null ? euro(row.einnahme) + " €" : ""}</td>
           <td class="num">${row.ausgabe != null ? euro(row.ausgabe) + " €" : ""}</td>
           <td class="num">${euro(row.bestand)} €</td>
-          <td class="kb-datum-td kb-date-col"></td>
           <td class="kb-date-col">${fmtDateDE(row.belegdatum)}</td>
           <td>${esc(row.text)}</td>
         `;
         kbTbody.appendChild(tr);
-        renderKassendatumCell(tr.querySelector(".kb-datum-td"), row);
       }
     }
 
@@ -1064,7 +1122,6 @@
         <td class="num"></td>
         <td class="num"></td>
         <td class="num kb-endbestand-td"></td>
-        <td class="kb-date-col"></td>
         <td class="kb-date-col">${fmtDateDE(`${data.jahr}-12-31`)}</td>
         <td class="kb-endbestand-text-td"></td>
       `;
@@ -1190,71 +1247,6 @@
       kbAnfangsbestandSave.disabled = false;
     }
   });
-
-  function renderKassendatumCell(td, row) {
-    td.innerHTML = "";
-    const wrap = document.createElement("div");
-    wrap.className = "kb-datum-cell";
-    const valueSpan = document.createElement("span");
-    if (row.kassendatum) {
-      valueSpan.textContent = fmtDateDE(row.kassendatum);
-    } else {
-      valueSpan.textContent = "—";
-      valueSpan.className = "kb-datum-missing";
-    }
-    const editBtn = document.createElement("button");
-    editBtn.className = "kb-edit-btn";
-    editBtn.type = "button";
-    editBtn.title = "Kassendatum bearbeiten";
-    editBtn.innerHTML = PENCIL_SVG;
-    wrap.append(editBtn, valueSpan);
-    td.appendChild(wrap);
-    editBtn.addEventListener("click", () => renderKassendatumEdit(td, row));
-  }
-
-  function renderKassendatumEdit(td, row) {
-    td.innerHTML = "";
-    const input = document.createElement("input");
-    input.type = "date";
-    input.className = "kb-datum-input";
-    input.value = row.kassendatum || "";
-    td.appendChild(input);
-    input.focus();
-
-    let done = false;
-    const commit = async () => {
-      if (done) return;
-      done = true;
-      const val = input.value;
-      if (!val) {
-        renderKassendatumCell(td, row);
-        return;
-      }
-      td.innerHTML = `<span style="color:var(--muted)">Speichere …</span>`;
-      try {
-        const resp = await fetch(KASSENDATUM_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ booking_id: row.booking_id, kassendatum: val }),
-        });
-        const result = await resp.json();
-        if (!resp.ok) throw new Error(result.error || `Fehler ${resp.status}`);
-        row.kassendatum = val;
-        renderKassendatumCell(td, row);
-      } catch (e) {
-        renderKassendatumCell(td, row);
-        alert(`Kassendatum konnte nicht gespeichert werden: ${e.message}`);
-      }
-    };
-    input.addEventListener("blur", commit);
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") input.blur();
-      if (e.key === "Escape") {
-        done = true;
-        renderKassendatumCell(td, row);
-      }
-    });
-  }
 
   renderList();
   renderPreview();
