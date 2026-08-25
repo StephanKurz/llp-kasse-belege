@@ -217,6 +217,7 @@
     background: var(--card-bg); position: sticky; top: 0; z-index: 2; box-shadow: 0 1px 0 var(--border);
   }
   #kb-table td.num, #kb-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  #kb-table td.kb-date-col, #kb-table th.kb-date-col { text-align: right; }
   #kb-table tr:last-child td { border-bottom: none; }
 
   .kb-datum-cell { display: inline-flex; align-items: center; gap: 6px; }
@@ -329,8 +330,8 @@
             <th class="num">Einnahmen</th>
             <th class="num">Ausgaben</th>
             <th class="num">Bestand</th>
-            <th>Kassendatum</th>
-            <th>Belegdatum</th>
+            <th class="kb-date-col">Kassendatum</th>
+            <th class="kb-date-col">Belegdatum</th>
             <th>Verwendung</th>
           </tr>
         </thead>
@@ -1026,8 +1027,8 @@
       <td class="num"></td>
       <td class="num"></td>
       <td class="num">${euro(data.anfangsbestand)} €</td>
-      <td></td>
-      <td>${fmtDateDE(`${data.jahr}-01-01`)}</td>
+      <td class="kb-date-col"></td>
+      <td class="kb-date-col">${fmtDateDE(`${data.jahr}-01-01`)}</td>
       <td>Anfangsbestand ${data.jahr}</td>
     `;
     kbTbody.appendChild(anfangsTr);
@@ -1043,8 +1044,8 @@
           <td class="num">${row.einnahme != null ? euro(row.einnahme) + " €" : ""}</td>
           <td class="num">${row.ausgabe != null ? euro(row.ausgabe) + " €" : ""}</td>
           <td class="num">${euro(row.bestand)} €</td>
-          <td class="kb-datum-td"></td>
-          <td>${fmtDateDE(row.belegdatum)}</td>
+          <td class="kb-datum-td kb-date-col"></td>
+          <td class="kb-date-col">${fmtDateDE(row.belegdatum)}</td>
           <td>${esc(row.text)}</td>
         `;
         kbTbody.appendChild(tr);
@@ -1063,8 +1064,8 @@
         <td class="num"></td>
         <td class="num"></td>
         <td class="num kb-endbestand-td"></td>
-        <td></td>
-        <td>${fmtDateDE(`${data.jahr}-12-31`)}</td>
+        <td class="kb-date-col"></td>
+        <td class="kb-date-col">${fmtDateDE(`${data.jahr}-12-31`)}</td>
         <td class="kb-endbestand-text-td"></td>
       `;
       kbTbody.appendChild(endTr);
@@ -1106,7 +1107,7 @@
       editBtn.type = "button";
       editBtn.title = "Jahresabschluss bestätigen";
       editBtn.innerHTML = PENCIL_SVG;
-      wrap.append(valueSpan, editBtn);
+      wrap.append(editBtn, valueSpan);
       tdBestand.appendChild(wrap);
       editBtn.addEventListener("click", () => renderEndbestandEdit(tdBestand, tdText, data));
       tdText.textContent = `Endbestand ${data.jahr}`;
@@ -1206,7 +1207,7 @@
     editBtn.type = "button";
     editBtn.title = "Kassendatum bearbeiten";
     editBtn.innerHTML = PENCIL_SVG;
-    wrap.append(valueSpan, editBtn);
+    wrap.append(editBtn, valueSpan);
     td.appendChild(wrap);
     editBtn.addEventListener("click", () => renderKassendatumEdit(td, row));
   }
