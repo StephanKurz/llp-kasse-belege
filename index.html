@@ -17,12 +17,17 @@
   }
   * { box-sizing: border-box; }
   html, body {
-    margin: 0; padding: 0;
+    margin: 0; padding: 0; height: 100%;
     font-family: -apple-system, "Segoe UI", Arial, sans-serif;
     color: var(--text);
     background: var(--bg);
+    overflow: hidden;
   }
-  #app { display: flex; flex-direction: column; min-height: 100%; }
+  /* Die Seite ist fuer eine fest hoehenbegrenzte Einbindung gebaut (siehe README, <iframe
+     height:800px>) - alles muss exakt in diese Hoehe passen, kein Scrollen der Gesamtseite.
+     Scrollen findet ausschliesslich innerhalb einzelner Bereiche statt (Beleg-Liste, Vorschau,
+     Kassenblatt-Tabelle). */
+  #app { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
 
   #toolbar {
     flex: none; display: flex; align-items: center; justify-content: space-between;
@@ -151,18 +156,28 @@
   body.dragging #drag-overlay { display: flex; }
 
   @media (max-width: 860px) {
+    html, body { overflow: auto; height: auto; }
+    #app { overflow: visible; height: auto; min-height: 100%; }
     #body { height: auto; max-height: 55vh; grid-template-columns: 1fr; overflow: visible; }
     #list-pane { max-height: 38vh; }
     #list { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
   }
 
-  #kb-section { flex: none; padding: 4px 20px 24px; }
-  #kb-toolbar { padding: 10px 0; display: flex; align-items: center; gap: 10px; }
+  /* Nimmt die gesamte verbleibende Hoehe unterhalb von #body ein (kein eigenes vh-Mass) - so
+     passt die Summe aus #toolbar + #body + #kb-section immer exakt in die verfuegbare Hoehe,
+     unabhaengig davon, wie hoch die Einbindung tatsaechlich ist. */
+  #kb-section {
+    flex: 1 1 auto; min-height: 0; overflow: hidden;
+    display: flex; flex-direction: column;
+    padding: 4px 20px 20px;
+  }
+  #kb-toolbar { flex: none; padding: 10px 0; display: flex; align-items: center; gap: 10px; }
   #kb-toolbar h2 { font-size: 15px; margin: 0; font-weight: 600; }
   .kb-jahr-nav { padding: 4px 9px; font-size: 12px; line-height: 1; }
-  #kb-error { color: var(--danger); font-size: 13px; margin-bottom: 8px; }
+  #kb-error { flex: none; color: var(--danger); font-size: 13px; margin-bottom: 8px; }
 
   #kb-anfangsbestand-form {
+    flex: none;
     background: #fff4e5; border: 1px solid #f0d9b5; border-radius: 8px;
     padding: 10px 12px; margin-bottom: 10px; font-size: 13px;
   }
@@ -176,6 +191,7 @@
   #kb-anfangsbestand-msg:empty { display: none; }
 
   #kb-abschluss-bar {
+    flex: none;
     display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
     background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px;
     padding: 8px 12px; margin-bottom: 10px; font-size: 13px;
@@ -187,11 +203,13 @@
     font-size: 13px; font-family: inherit;
   }
 
-  /* max-height + overflow:auto auf dem Wrapper + position:sticky auf th ist die uebliche
-     Kombination, damit die Spaltenkoepfe beim Scrollen innerhalb der Tabelle erhalten bleiben
-     (siehe gleiches Muster im Budgetkontrolle-Tool). */
+  /* flex:1 statt festem vh-Mass - der Wrapper nimmt genau die Hoehe ein, die innerhalb von
+     #kb-section nach Toolbar/Formularen/Abschluss-Leiste noch uebrig bleibt (so passt die Summe
+     immer exakt in die verfuegbare Hoehe, siehe Kommentar bei #kb-section). overflow:auto +
+     position:sticky auf th haelt die Spaltenkoepfe beim Scrollen innerhalb der Tabelle fest
+     (gleiches Muster wie im Budgetkontrolle-Tool). */
   #kb-table-wrap {
-    max-height: 50vh; overflow: auto;
+    flex: 1 1 auto; min-height: 0; overflow: auto;
     border: 1px solid var(--border); border-radius: 10px; background: var(--card-bg);
   }
   #kb-table { width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 0; font-size: 13px; }
@@ -216,7 +234,8 @@
   }
 
   @media (max-width: 860px) {
-    #kb-table-wrap { max-height: 40vh; }
+    #kb-section { flex: none; overflow: visible; }
+    #kb-table-wrap { flex: none; max-height: 40vh; }
   }
 </style>
 </head>
