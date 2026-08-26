@@ -211,6 +211,31 @@ async function ermittleAktuellenKassenbestand(
   return Math.round(bestand * 100) / 100;
 }
 
+// Duplikats-Pruefung: ohne erkennbare Belegnummer (der Normalfall bei einfachen Kassenbelegen)
+// generiert dieser Ablauf weiter unten eine garantiert eindeutige Zufalls-invNumber - Easyvereins
+// eigene Eindeutigkeitspruefung auf invNumber greift dadurch nie, ein versehentlich zweimal
+// hochgeladener Beleg wuerde sonst kommentarlos doppelt angelegt. Sucht daher hier selbst nach
+// einem bereits erfolgreich angelegten Beleg (kasse_belege_log, status="angelegt") mit gleichem
+// Aussteller, Datum und Betrag. Bewusst kein hartes Verbot (z.B. zwei echte Parkquittungen vom
+// selben Tag ueber denselben Betrag kommen in der Praxis vor, siehe Kassenblatt-Historie) -
+// stattdessen eine Rueckfrage im Frontend, die der Nutzer bewusst bestaetigen kann
+// (force_duplicate=true im naechsten Request).
+async function findMoeglichesDuplikat(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  params: { datum: string; betrag: number; art: string; aussteller: string },
+): Promise<{ id: number; created_at: string; aussteller: string; belegnummer: string | null } | null> {
+  const resp = await fetch(
+    `${supabaseUrl}/rest/v1/kasse_belege_log?status=eq.angelegt&datum=eq.${params.datum}&betrag=eq.${params.betrag}&art=eq.${params.art}` +
+      `&select=id,created_at,aussteller,belegnummer&order=created_at.desc`,
+    { headers: { apikey: serviceRoleKey, Authorization: `Bearer ${serviceRoleKey}` } },
+  );
+  const rows = await resp.json();
+  if (!Array.isArray(rows)) return null;
+  const ziel = (params.aussteller || "").trim().toLowerCase();
+  return rows.find((row: any) => (row.aussteller || "").trim().toLowerCase() === ziel) || null;
+}
+
 async function evUploadAttachment(
   invoiceId: number,
   pdfBytes: Uint8Array,
@@ -367,6 +392,7 @@ Deno.serve(async (req: Request) => {
     ort,
     contact_override_id,
     contact_override_name,
+    force_duplicate,
   } = body ?? {};
 
   if (!mimeType || !fileBase64) {
@@ -386,6 +412,28 @@ Deno.serve(async (req: Request) => {
       { error: `Unbekannte Buchungskonto-Nummer: ${buchungskonto_nr}. Erlaubt sind: ${Object.keys(BUCHUNGSKONTEN).join(", ")}` },
       400,
     );
+  }
+
+  // Duplikats-Pruefung: siehe Kommentar bei findMoeglichesDuplikat. Nur wenn der Nutzer die
+  // Rueckfrage im Frontend bereits bestaetigt hat (force_duplicate), wird sie uebersprungen.
+  if (force_duplicate !== true) {
+    const duplikat = await findMoeglichesDuplikat(SUPABASE_URL, SERVICE_ROLE_KEY, {
+      datum,
+      betrag,
+      art: artNorm,
+      aussteller: aussteller ?? "",
+    });
+    if (duplikat) {
+      const wann = new Date(duplikat.created_at).toLocaleString("de-DE");
+      return jsonResponse(
+        {
+          error: `Es gibt bereits einen erfolgreich angelegten Beleg mit gleichem Aussteller, Datum und Betrag (angelegt am ${wann}, Belegnummer ${duplikat.belegnummer || "-"}). Soll dieser Beleg trotzdem zusätzlich angelegt werden?`,
+          code: "moeglich_duplikat",
+          duplikat,
+        },
+        409,
+      );
+    }
   }
 
   // Kassenminus-Pruefung: eine Ausgabe (sofort bar bezahlt) darf den Kassenbestand nie negativ

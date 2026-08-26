@@ -150,17 +150,18 @@
   .row-msg.ok { color: var(--ok); }
   .confidence-low { color: #8a5300; font-size: 12.5px; margin-bottom: 8px; }
 
-  #kb-modal-overlay {
+  .kb-modal-overlay {
     position: fixed; inset: 0; background: rgba(0, 0, 0, .45);
     display: flex; align-items: center; justify-content: center; z-index: 200;
   }
-  #kb-modal-overlay[hidden] { display: none; }
-  #kb-modal-box {
+  .kb-modal-overlay[hidden] { display: none; }
+  .kb-modal-box {
     background: #fff; border-radius: 10px; padding: 20px 24px;
     max-width: 420px; width: calc(100% - 40px); box-shadow: 0 10px 30px rgba(0, 0, 0, .2);
   }
-  #kb-modal-box h3 { margin: 0 0 10px; color: var(--danger); font-size: 16px; }
-  #kb-modal-box p { margin: 0 0 16px; font-size: 13.5px; line-height: 1.5; }
+  .kb-modal-box h3 { margin: 0 0 10px; color: var(--danger); font-size: 16px; }
+  .kb-modal-box p { margin: 0 0 16px; font-size: 13.5px; line-height: 1.5; }
+  .kb-modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
   #drag-overlay {
     position: fixed; inset: 0; border: 3px dashed var(--accent); background: rgba(189, 0, 16, .05);
@@ -363,11 +364,24 @@
   <input type="file" id="file-input" accept="image/jpeg,image/png,application/pdf" multiple>
   <div id="drag-overlay">Beleg hier ablegen</div>
 
-  <div id="kb-modal-overlay" hidden>
-    <div id="kb-modal-box">
+  <div id="kb-modal-overlay" class="kb-modal-overlay" hidden>
+    <div class="kb-modal-box">
       <h3>Kassenbestand nicht ausreichend</h3>
       <p id="kb-modal-text"></p>
-      <button id="kb-modal-close" class="btn" type="button">Schließen</button>
+      <div class="kb-modal-actions">
+        <button id="kb-modal-close" class="btn" type="button">Schließen</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="kb-duplikat-modal-overlay" class="kb-modal-overlay" hidden>
+    <div class="kb-modal-box">
+      <h3>Möglicher doppelter Beleg</h3>
+      <p id="kb-duplikat-modal-text"></p>
+      <div class="kb-modal-actions">
+        <button id="kb-duplikat-modal-cancel" class="btn-secondary" type="button">Abbrechen</button>
+        <button id="kb-duplikat-modal-confirm" class="btn" type="button">Trotzdem anlegen</button>
+      </div>
     </div>
   </div>
 </div>
@@ -410,6 +424,28 @@
   document.getElementById("kb-modal-close").addEventListener("click", () => {
     kbModalOverlay.hidden = true;
   });
+
+  const kbDuplikatModalOverlay = document.getElementById("kb-duplikat-modal-overlay");
+  const kbDuplikatModalText = document.getElementById("kb-duplikat-modal-text");
+  let duplikatModalReceipt = null;
+  document.getElementById("kb-duplikat-modal-cancel").addEventListener("click", () => {
+    kbDuplikatModalOverlay.hidden = true;
+    duplikatModalReceipt = null;
+  });
+  document.getElementById("kb-duplikat-modal-confirm").addEventListener("click", () => {
+    kbDuplikatModalOverlay.hidden = true;
+    const r = duplikatModalReceipt;
+    duplikatModalReceipt = null;
+    if (r) {
+      r.forceDuplicate = true;
+      submitAnlegen(r);
+    }
+  });
+  function showDuplikatModal(text, r) {
+    duplikatModalReceipt = r;
+    kbDuplikatModalText.textContent = text;
+    kbDuplikatModalOverlay.hidden = false;
+  }
   const kbPrintBtn = document.getElementById("kb-print-btn");
   const kbPrintMeta = document.getElementById("kb-print-meta");
   kbPrintBtn.innerHTML = PRINTER_SVG;
@@ -779,6 +815,7 @@
       ort: r.fields.ort || null,
       contact_override_id: r.fields.contactOverrideId || null,
       contact_override_name: r.fields.contactOverrideName || null,
+      force_duplicate: !!r.forceDuplicate,
     };
 
     try {
@@ -796,6 +833,15 @@
           r.errorCode = "kassenminus";
           r.message = null;
           showKassenminusModal(result.error);
+          renderList();
+          return;
+        }
+        if (result.code === "moeglich_duplikat") {
+          // Rueckfrage statt Fehler - Status geht zurueck auf "pruefen" (Schalter erscheint wieder
+          // normal), erst nach expliziter Bestaetigung im Modal wird mit force_duplicate erneut
+          // gesendet (siehe kb-duplikat-modal-confirm-Handler).
+          r.status = "pruefen";
+          showDuplikatModal(result.error, r);
           renderList();
           return;
         }
