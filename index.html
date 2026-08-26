@@ -340,6 +340,7 @@
           <col style="width:110px">
           <col style="width:110px">
           <col style="width:110px">
+          <col style="width:170px">
           <col>
         </colgroup>
         <thead>
@@ -348,6 +349,7 @@
             <th class="num">Ausgaben</th>
             <th class="num">Bestand</th>
             <th class="kb-date-col">Belegdatum</th>
+            <th>Gegenkonto</th>
             <th>Verwendung</th>
           </tr>
         </thead>
@@ -475,6 +477,7 @@
         "", "", "",
         euro(data.anfangsbestand) + " €",
         fmtDateDE(`${data.jahr}-01-01`),
+        "",
         `Anfangsbestand ${data.jahr}`,
       ]);
       data.rows.forEach((row, i) => {
@@ -484,6 +487,7 @@
           row.ausgabe != null ? euro(row.ausgabe) + " €" : "",
           euro(row.bestand) + " €",
           fmtDateDE(row.belegdatum),
+          row.gegenkonto || "",
           row.text,
         ]);
       });
@@ -494,11 +498,11 @@
           ? `Endbestand ${data.jahr} (bestätigt am ${abschlussDatum})`
           : `Endbestand ${data.jahr}`;
         const endWert = data.abgeschlossen ? data.endbestand : computeAktuellerEndbestand(data);
-        body.push(["", "", "", euro(endWert) + " €", fmtDateDE(`${data.jahr}-12-31`), endText]);
+        body.push(["", "", "", euro(endWert) + " €", fmtDateDE(`${data.jahr}-12-31`), "", endText]);
       }
 
       doc.autoTable({
-        head: [["", "Einnahmen", "Ausgaben", "Bestand", "Belegdatum", "Verwendung"]],
+        head: [["", "Einnahmen", "Ausgaben", "Bestand", "Belegdatum", "Gegenkonto", "Verwendung"]],
         body,
         startY: headerHeight,
         margin: { top: headerHeight, bottom: footerHeight, left: marginX, right: marginX },
@@ -513,7 +517,8 @@
           2: { cellWidth: 20, halign: "right" },
           3: { cellWidth: 22, halign: "right" },
           4: { cellWidth: 20, halign: "right" },
-          5: { cellWidth: "auto", halign: "left" },
+          5: { cellWidth: 32, halign: "left" },
+          6: { cellWidth: "auto", halign: "left" },
         },
         didParseCell: (d) => {
           if (d.section === "body" && d.row.raw[0] === "") d.cell.styles.fontStyle = "bold";
@@ -1189,7 +1194,7 @@
     kbAnfangsbestandForm.hidden = true;
     kbTableWrap.hidden = false;
     kbBestandAnzeige.textContent = "";
-    kbTbody.innerHTML = `<tr><td colspan="5" style="color:var(--muted)">Lade …</td></tr>`;
+    kbTbody.innerHTML = `<tr><td colspan="6" style="color:var(--muted)">Lade …</td></tr>`;
     try {
       const resp = await fetch(`${KASSENBLATT_URL}?jahr=${currentKbJahr}`);
       const data = await resp.json();
@@ -1233,13 +1238,14 @@
       <td class="num"></td>
       <td class="num">${euro(data.anfangsbestand)} €</td>
       <td class="kb-date-col">${fmtDateDE(`${data.jahr}-01-01`)}</td>
+      <td></td>
       <td>Anfangsbestand ${data.jahr}</td>
     `;
     kbTbody.appendChild(anfangsTr);
 
     if (!data.rows.length) {
       const emptyTr = document.createElement("tr");
-      emptyTr.innerHTML = `<td colspan="5" style="color:var(--muted)">Noch keine Buchungen im Jahr ${data.jahr}.</td>`;
+      emptyTr.innerHTML = `<td colspan="6" style="color:var(--muted)">Noch keine Buchungen im Jahr ${data.jahr}.</td>`;
       kbTbody.appendChild(emptyTr);
     } else {
       for (const row of data.rows) {
@@ -1249,6 +1255,7 @@
           <td class="num">${row.ausgabe != null ? euro(row.ausgabe) + " €" : ""}</td>
           <td class="num">${euro(row.bestand)} €</td>
           <td class="kb-date-col">${fmtDateDE(row.belegdatum)}</td>
+          <td>${esc(row.gegenkonto || "—")}</td>
           <td>${esc(row.text)}</td>
         `;
         kbTbody.appendChild(tr);
@@ -1267,6 +1274,7 @@
         <td class="num"></td>
         <td class="num kb-endbestand-td"></td>
         <td class="kb-date-col">${fmtDateDE(`${data.jahr}-12-31`)}</td>
+        <td></td>
         <td class="kb-endbestand-text-td"></td>
       `;
       kbTbody.appendChild(endTr);

@@ -137,14 +137,38 @@ Deno.serve(async (req: Request) => {
       })
       .sort((a: any, b: any) => String(a.date).localeCompare(String(b.date)) || a.id - b.id);
 
+    // Gegenkonto-Name live von Easyverein nachladen (nicht aus einer festen Liste - der
+    // Kontenplan kann Sachkonten enthalten, die im Kassenbelege-Erfassen-Widget gar nicht zur
+    // Auswahl stehen, z.B. bei historisch importierten oder direkt in Easyverein gebuchten
+    // Eintraegen). Pro eindeutigem Gegenkonto nur eine Abfrage, nicht pro Buchung.
+    const gegenkontoIds = new Set<number>();
+    for (const b of jahrBookings) {
+      const match = String(b.billingAccount || "").match(/\/billing-account\/(\d+)/);
+      if (match) gegenkontoIds.add(Number(match[1]));
+    }
+    const gegenkontoNamen = new Map<number, string>();
+    await Promise.all(
+      Array.from(gegenkontoIds).map(async (id) => {
+        try {
+          const konto = await evGet(`${EV_BASE_URL}/billing-account/${id}/`, evApiKey);
+          gegenkontoNamen.set(id, konto.name || `Konto ${id}`);
+        } catch {
+          gegenkontoNamen.set(id, `Konto ${id}`);
+        }
+      }),
+    );
+
     let bestand = anfangsbestand;
     const rows = jahrBookings.map((b: any) => {
       const amount = Number(b.amount);
       bestand += amount;
+      const gkMatch = String(b.billingAccount || "").match(/\/billing-account\/(\d+)/);
+      const gegenkonto = gkMatch ? gegenkontoNamen.get(Number(gkMatch[1])) || null : null;
       return {
         booking_id: b.id,
         belegdatum: String(b.date || "").slice(0, 10),
         text: b.description || "",
+        gegenkonto,
         einnahme: amount > 0 ? amount : null,
         ausgabe: amount < 0 ? Math.abs(amount) : null,
         bestand: Math.round(bestand * 100) / 100,
