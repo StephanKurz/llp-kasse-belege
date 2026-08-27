@@ -54,6 +54,12 @@
   .btn-secondary:disabled { opacity: 0.5; cursor: default; }
   .btn-secondary:hover:not(:disabled) { background: var(--bg); }
 
+  .ki-hinweis-link {
+    background: none; border: none; padding: 0; align-self: center;
+    color: var(--muted); font-size: 12px; text-decoration: underline; cursor: pointer;
+  }
+  .ki-hinweis-link:hover { color: var(--text); }
+
   /* Feste 50/50-Aufteilung statt seitenverhaeltnis-abhaengiger Breite: auf grossen Bildschirmen
      bekommt die Vorschau dadurch reichlich Platz, und die Aufteilung aendert sich nicht mehr je
      nach ausgewaehltem Beleg (behebt auch den Spalten-Reflow der Liste von vorher).
@@ -291,6 +297,7 @@
   <div id="toolbar">
     <h1>Kassenbelege erfassen</h1>
     <div id="toolbar-actions">
+      <button id="ki-hinweis-btn" class="ki-hinweis-link" type="button">KI-Hinweis</button>
       <button id="upload-btn" class="btn"
         title="Beleg (Foto oder PDF) hochladen - die Felder werden automatisch ausgelesen. Bitte vor dem Anlegen prüfen und ggf. korrigieren. JPG, PNG oder PDF, auch mehrere gleichzeitig.">
         Beleg hochladen
@@ -386,6 +393,17 @@
       </div>
     </div>
   </div>
+
+  <div id="ki-hinweis-modal-overlay" class="kb-modal-overlay" hidden>
+    <div class="kb-modal-box">
+      <h3>KI-Hinweis</h3>
+      <p>Diese Anwendung nutzt künstliche Intelligenz (KI) zur automatisierten Erkennung und Verarbeitung von Belegdaten (z.&nbsp;B. Betrag, Datum, Verwendungszweck) aus hochgeladenen Fotos und PDFs.</p>
+      <p>Die von der KI erkannten Daten werden vor der Übernahme in die Buchhaltung angezeigt und können vor dem Anlegen manuell geprüft und korrigiert werden.</p>
+      <div class="kb-modal-actions">
+        <button id="ki-hinweis-modal-close" class="btn" type="button">Schließen</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -434,6 +452,14 @@
     kbDuplikatModalOverlay.hidden = true;
     duplikatModalReceipt = null;
   });
+  const kiHinweisModalOverlay = document.getElementById("ki-hinweis-modal-overlay");
+  document.getElementById("ki-hinweis-btn").addEventListener("click", () => {
+    kiHinweisModalOverlay.hidden = false;
+  });
+  document.getElementById("ki-hinweis-modal-close").addEventListener("click", () => {
+    kiHinweisModalOverlay.hidden = true;
+  });
+
   document.getElementById("kb-duplikat-modal-confirm").addEventListener("click", () => {
     kbDuplikatModalOverlay.hidden = true;
     const r = duplikatModalReceipt;
