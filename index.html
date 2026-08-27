@@ -60,6 +60,8 @@
   }
   .ki-hinweis-link:hover { color: var(--text); }
 
+  #ki-hinweis-footer { flex: none; text-align: center; padding: 6px 0; }
+
   /* Feste 50/50-Aufteilung statt seitenverhaeltnis-abhaengiger Breite: auf grossen Bildschirmen
      bekommt die Vorschau dadurch reichlich Platz, und die Aufteilung aendert sich nicht mehr je
      nach ausgewaehltem Beleg (behebt auch den Spalten-Reflow der Liste von vorher).
@@ -268,7 +270,7 @@
 
   @media print {
     #toolbar, #body, #kb-toolbar, #kb-error, #kb-anfangsbestand-form,
-    .kb-edit-btn, .kb-endbestand-undo-btn {
+    .kb-edit-btn, .kb-endbestand-undo-btn, #ki-hinweis-footer {
       display: none !important;
     }
     html, body { height: auto !important; overflow: visible !important; font-family: Arial, Helvetica, sans-serif; }
@@ -297,7 +299,6 @@
   <div id="toolbar">
     <h1>Kassenbelege erfassen</h1>
     <div id="toolbar-actions">
-      <button id="ki-hinweis-btn" class="ki-hinweis-link" type="button">KI-Hinweis</button>
       <button id="upload-btn" class="btn"
         title="Beleg (Foto oder PDF) hochladen - die Felder werden automatisch ausgelesen. Bitte vor dem Anlegen prüfen und ggf. korrigieren. JPG, PNG oder PDF, auch mehrere gleichzeitig.">
         Beleg hochladen
@@ -370,6 +371,10 @@
     </div>
   </div>
 
+  <div id="ki-hinweis-footer">
+    <button id="ki-hinweis-btn" class="ki-hinweis-link" type="button">KI-Hinweis</button>
+  </div>
+
   <input type="file" id="file-input" accept="image/jpeg,image/png,application/pdf" multiple>
   <div id="drag-overlay">Beleg hier ablegen</div>
 
@@ -398,7 +403,7 @@
     <div class="kb-modal-box">
       <h3>KI-Hinweis</h3>
       <p>Diese Anwendung nutzt künstliche Intelligenz (KI) zur automatisierten Erkennung und Verarbeitung von Belegdaten (z.&nbsp;B. Betrag, Datum, Verwendungszweck) aus hochgeladenen Fotos und PDFs.</p>
-      <p>Die von der KI erkannten Daten werden vor der Übernahme in die Buchhaltung angezeigt und können vor dem Anlegen manuell geprüft und korrigiert werden.</p>
+      <p>Die von der KI erkannten Daten werden vor der Übernahme in die Buchhaltung angezeigt und können vor dem Anlegen manuell geprüft und korrigiert werden. Die KI kann dabei Fehler machen, z.&nbsp;B. bei schlecht lesbaren oder unvollständigen Belegen falsche oder unvollständige Werte erkennen.</p>
       <div class="kb-modal-actions">
         <button id="ki-hinweis-modal-close" class="btn" type="button">Schließen</button>
       </div>
